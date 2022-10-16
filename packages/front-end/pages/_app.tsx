@@ -2,19 +2,23 @@ import { AppProps } from "next/app";
 import "../styles/global.scss";
 import { AuthProvider } from "../services/auth";
 import ProtectedPage from "../components/ProtectedPage";
-import Layout from "../components/Layout/Layout";
 import Head from "next/head";
 import { DefinitionsProvider } from "../services/DefinitionsContext";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import track from "../services/track";
 import { initEnv } from "../services/env";
-import { useState } from "react";
 import LoadingOverlay from "../components/LoadingOverlay";
 import "diff2html/bundles/css/diff2html.min.css";
 import { GrowthBook, GrowthBookProvider } from "@growthbook/growthbook-react";
+import Layout from "../components/Layout/Layout";
+import { AppearanceUIThemeProvider } from "../services/AppearanceUIThemeProvider";
 
 type ModAppProps = AppProps & {
-  Component: { noOrganization?: boolean; preAuth?: boolean };
+  Component: {
+    noOrganization?: boolean;
+    preAuth?: boolean;
+    liteLayout?: boolean;
+  };
 };
 
 const growthbook = new GrowthBook({
@@ -40,6 +44,8 @@ function App({
 
   const organizationRequired = !Component.noOrganization;
   const preAuth = Component.preAuth || false;
+
+  const liteLayout = Component.liteLayout || false;
 
   useEffect(() => {
     initEnv()
@@ -75,25 +81,28 @@ function App({
         <meta name="robots" content="noindex, nofollow" />
       </Head>
       {ready ? (
-        <AuthProvider>
-          <GrowthBookProvider growthbook={growthbook}>
-            <ProtectedPage
-              organizationRequired={organizationRequired}
-              preAuth={preAuth}
-            >
-              {organizationRequired && !preAuth ? (
-                <DefinitionsProvider>
-                  <Layout />
-                  <main className={`main ${parts[0]}`}>
+        preAuth ? (
+          <Component {...pageProps} />
+        ) : (
+          <AuthProvider>
+            <AppearanceUIThemeProvider>
+              <GrowthBookProvider growthbook={growthbook}>
+                <ProtectedPage organizationRequired={organizationRequired}>
+                  {organizationRequired ? (
+                    <DefinitionsProvider>
+                      {!liteLayout && <Layout />}
+                      <main className={`main ${parts[0]}`}>
+                        <Component {...pageProps} />
+                      </main>
+                    </DefinitionsProvider>
+                  ) : (
                     <Component {...pageProps} />
-                  </main>
-                </DefinitionsProvider>
-              ) : (
-                <Component {...pageProps} />
-              )}
-            </ProtectedPage>
-          </GrowthBookProvider>
-        </AuthProvider>
+                  )}
+                </ProtectedPage>
+              </GrowthBookProvider>
+            </AppearanceUIThemeProvider>
+          </AuthProvider>
+        )
       ) : error ? (
         <div className="container mt-3">
           <div className="alert alert-danger">

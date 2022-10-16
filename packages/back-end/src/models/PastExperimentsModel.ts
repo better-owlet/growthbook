@@ -10,6 +10,8 @@ const pastExperimentsSchema = new mongoose.Schema({
     {
       _id: false,
       trackingKey: String,
+      experimentName: String,
+      variationNames: [String],
       numVariations: Number,
       variationKeys: [String],
       weights: [Number],
@@ -19,6 +21,10 @@ const pastExperimentsSchema = new mongoose.Schema({
       exposureQueryId: String,
     },
   ],
+  config: {
+    start: Date,
+    end: Date,
+  },
   runStarted: Date,
   queries: queriesSchema,
   error: String,

@@ -12,6 +12,7 @@ import ClickHouse from "../integrations/ClickHouse";
 import Mixpanel from "../integrations/Mixpanel";
 import { DataSourceInterface, DataSourceParams } from "../../types/datasource";
 import Mysql from "../integrations/Mysql";
+import Mssql from "../integrations/Mssql";
 
 export function decryptDataSourceParams<T = DataSourceParams>(
   encrypted: string
@@ -61,12 +62,14 @@ export function getSourceIntegrationObject(datasource: DataSourceInterface) {
     obj = new Postgres(params, settings);
   } else if (type === "mysql") {
     obj = new Mysql(params, settings);
+  } else if (type === "mssql") {
+    obj = new Mssql(params, settings);
   } else if (type === "bigquery") {
     obj = new BigQuery(params, settings);
   } else if (type === "clickhouse") {
     obj = new ClickHouse(params, settings);
   } else if (type === "mixpanel") {
-    obj = new Mixpanel(params, settings);
+    obj = new Mixpanel(params, settings ?? {});
   } else if (type === "presto") {
     obj = new Presto(params, settings);
   } else {

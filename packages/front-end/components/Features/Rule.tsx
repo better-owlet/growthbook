@@ -13,8 +13,7 @@ import { FaArrowsAlt } from "react-icons/fa";
 import ExperimentSummary from "./ExperimentSummary";
 import track from "../../services/track";
 import { ExperimentInterfaceStringDates } from "back-end/types/experiment";
-import { getRules } from "../../services/features";
-import { useEnvironments } from "../../services/features";
+import { getRules, useEnvironments } from "../../services/features";
 
 interface SortableProps {
   i: number;
@@ -195,7 +194,10 @@ export const Rule = forwardRef<HTMLDivElement, RuleProps>(
           </div>
         </div>
         <div className="d-flex">
-          <div style={{ flex: 1 }} className="pt-1 position-relative">
+          <div
+            style={{ flex: 1, maxWidth: "100%" }}
+            className="pt-1 position-relative"
+          >
             {!rule.enabled && (
               <div
                 style={{

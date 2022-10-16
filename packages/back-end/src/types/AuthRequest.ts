@@ -1,14 +1,19 @@
 import { Request } from "express";
-import { OrganizationInterface } from "../../types/organization";
+import { OrganizationInterface, Permissions } from "../../types/organization";
 import { AuditInterface } from "../../types/audit";
-import { Permissions } from "../../types/organization";
+import { SSOConnectionInterface } from "../../types/sso-connection";
 
 // eslint-disable-next-line
-export type AuthRequest<B = any, P = any, Q = any> = Request<P, null, B, Q> & {
+export type AuthRequest<
+  Body = unknown,
+  Params = unknown,
+  QueryParams = unknown
+> = Request<Params, unknown, Body, QueryParams> & {
   email: string;
   verified?: boolean;
   userId?: string;
-  loginMethod?: string;
+  loginMethod?: SSOConnectionInterface;
+  authSubject?: string;
   name?: string;
   admin?: boolean;
   organization?: OrganizationInterface;

@@ -1,9 +1,7 @@
-import React from "react";
+import React, { useMemo, useState } from "react";
 import Link from "next/link";
 import { useDefinitions } from "../../services/DefinitionsContext";
 import { ExperimentInterfaceStringDates } from "back-end/types/experiment";
-import { useState } from "react";
-import DataSourceForm from "../Settings/DataSourceForm";
 import { useRouter } from "next/router";
 import MetricForm from "../Metrics/MetricForm";
 import { FaChevronRight, FaDatabase, FaQuestionCircle } from "react-icons/fa";
@@ -12,13 +10,13 @@ import Tooltip from "../Tooltip";
 import { useAuth } from "../../services/auth";
 import track from "../../services/track";
 import { hasFileConfig } from "../../services/env";
-import EditDataSourceSettingsForm from "../Settings/EditDataSourceSettingsForm";
 import ImportExperimentModal from "../Experiment/ImportExperimentModal";
 import GetStartedStep from "./GetStartedStep";
 import DocumentationLinksSidebar from "./DocumentationLinksSidebar";
 import useOrgSettings from "../../hooks/useOrgSettings";
-import { useMemo } from "react";
 import usePermissions from "../../hooks/usePermissions";
+import { DocLink } from "../DocLink";
+import NewDataSourceForm from "../Settings/NewDataSourceForm";
 
 const ExperimentsGetStarted = ({
   experiments,
@@ -36,7 +34,6 @@ const ExperimentsGetStarted = ({
   const [dataSourceOpen, setDataSourceOpen] = useState(false);
   const [metricsOpen, setMetricsOpen] = useState(false);
   const [experimentsOpen, setExperimentsOpen] = useState(false);
-  const [dataSourceQueriesOpen, setDataSourceQueriesOpen] = useState(false);
   const router = useRouter();
 
   // If this is coming from a feature experiment rule
@@ -91,22 +88,8 @@ const ExperimentsGetStarted = ({
   return (
     <>
       <div>
-        {dataSourceQueriesOpen &&
-          datasources?.[0] &&
-          datasources[0].properties?.hasSettings && (
-            <EditDataSourceSettingsForm
-              firstTime={true}
-              data={datasources[0]}
-              onCancel={() => setDataSourceQueriesOpen(false)}
-              onSuccess={() => {
-                setDataSourceQueriesOpen(false);
-                mutateDefinitions();
-              }}
-              source="onboarding"
-            />
-          )}
         {dataSourceOpen && (
-          <DataSourceForm
+          <NewDataSourceForm
             data={{
               name: "My Datasource",
               settings: {},
@@ -117,7 +100,6 @@ const ExperimentsGetStarted = ({
             onSuccess={async () => {
               await mutateDefinitions();
               setDataSourceOpen(false);
-              setDataSourceQueriesOpen(true);
             }}
             importSampleData={
               !hasDataSource &&
@@ -132,11 +114,11 @@ const ExperimentsGetStarted = ({
             current={{}}
             edit={false}
             source="get-started"
-            onClose={(refresh) => {
+            onClose={() => {
               setMetricsOpen(false);
-              if (refresh) {
-                mutateDefinitions();
-              }
+            }}
+            onSuccess={() => {
+              mutateDefinitions();
             }}
           />
         )}
@@ -154,9 +136,7 @@ const ExperimentsGetStarted = ({
               <div className="alert alert-info">
                 It looks like you have a <code>config.yml</code> file. Use that
                 to define data sources and metrics.{" "}
-                <a href="https://docs.growthbook.io/self-host/config#configyml">
-                  View Documentation
-                </a>
+                <DocLink docSection="config_yml">View Documentation</DocLink>
               </div>
             ) : featureExperiment ? (
               <div className="alert alert-info mb-3">

@@ -8,6 +8,7 @@ import { PostgresConnectionParams } from "./integrations/postgres";
 import { PrestoConnectionParams } from "./integrations/presto";
 import { SnowflakeConnectionParams } from "./integrations/snowflake";
 import { MetricType } from "./metric";
+import { MssqlConnectionParams } from "./integrations/mssql";
 
 export type DataSourceType =
   | "redshift"
@@ -16,6 +17,7 @@ export type DataSourceType =
   | "snowflake"
   | "postgres"
   | "mysql"
+  | "mssql"
   | "bigquery"
   | "clickhouse"
   | "presto"
@@ -24,6 +26,7 @@ export type DataSourceType =
 export type DataSourceParams =
   | PostgresConnectionParams
   | MysqlConnectionParams
+  | MssqlConnectionParams
   | AthenaConnectionParams
   | PrestoConnectionParams
   | GoogleAnalyticsParams
@@ -37,14 +40,39 @@ export type QueryLanguage = "sql" | "javascript" | "json" | "none";
 export type SchemaFormat =
   | "segment"
   | "snowplow"
+  | "jitsu"
+  | "freshpaint"
   | "ga4"
+  | "gaua"
+  | "matomo"
+  | "heap"
   | "rudderstack"
   | "amplitude"
+  | "mparticle"
+  | "mixpanel"
+  | "firebase"
+  | "keen"
+  | "clevertap"
   | "custom";
 
+export type SchemaOption = {
+  name: string;
+  type: string;
+  label: string;
+  defaultValue: string | number;
+  helpText?: string;
+};
+
 export interface SchemaInterface {
-  getExperimentSQL(tablePrefix: string, userId: string): string;
-  getIdentitySQL(tablePrefix: string): IdentityJoinQuery[];
+  getExperimentSQL(
+    tablePrefix: string,
+    userId: string,
+    options?: Record<string, string | number>
+  ): string;
+  getIdentitySQL(
+    tablePrefix: string,
+    options?: Record<string, string | number>
+  ): IdentityJoinQuery[];
   experimentDimensions: string[];
   userIdTypes: string[];
   getMetricSQL(name: string, type: MetricType, tablePrefix: string): string;
@@ -68,6 +96,7 @@ export interface DataSourceProperties {
 type WithParams<B, P> = Omit<B, "params"> & {
   params: P;
   properties?: DataSourceProperties;
+  decryptionError: boolean;
 };
 
 export type IdentityJoinQuery = {
@@ -81,6 +110,7 @@ export interface ExposureQuery {
   description?: string;
   userIdType: string;
   query: string;
+  hasNameCol?: boolean;
   dimensions: string[];
 }
 
@@ -89,11 +119,18 @@ export interface UserIdType {
   description?: string;
 }
 
+export type DataSourceEvents = {
+  experimentEvent?: string;
+  experimentIdProperty?: string;
+  variationIdProperty?: string;
+};
+
 export type DataSourceSettings = {
   // @deprecated
   experimentDimensions?: string[];
   notebookRunQuery?: string;
   schemaFormat?: SchemaFormat;
+  schemaOptions?: Record<string, string | number>;
   userIdTypes?: UserIdType[];
   queries?: {
     // @deprecated
@@ -103,11 +140,7 @@ export type DataSourceSettings = {
     // @deprecated
     pageviewsQuery?: string;
   };
-  events?: {
-    experimentEvent?: string;
-    experimentIdProperty?: string;
-    variationIdProperty?: string;
-  };
+  events?: DataSourceEvents;
   default?: {
     timestampColumn?: string;
     userIdColumn?: string;
@@ -166,6 +199,10 @@ interface MysqlDataSource extends DataSourceBase {
   type: "mysql";
 }
 
+interface MssqlDataSource extends DataSourceBase {
+  type: "mssql";
+}
+
 interface PostgresDataSource extends DataSourceBase {
   type: "postgres";
 }
@@ -210,6 +247,10 @@ export type MysqlDataSourceWithParams = WithParams<
   MysqlDataSource,
   MysqlConnectionParams
 >;
+export type MssqlDataSourceWithParams = WithParams<
+  MssqlDataSource,
+  MssqlConnectionParams
+>;
 export type BigQueryDataSourceWithParams = WithParams<
   BigQueryDataSource,
   BigQueryConnectionParams
@@ -231,6 +272,7 @@ export type DataSourceInterface =
   | SnowflakeDataSource
   | PostgresDataSource
   | MysqlDataSource
+  | MssqlDataSource
   | BigQueryDataSource
   | ClickHouseDataSource
   | MixpanelDataSource;
@@ -243,6 +285,7 @@ export type DataSourceInterfaceWithParams =
   | SnowflakeDataSourceWithParams
   | PostgresDataSourceWithParams
   | MysqlDataSourceWithParams
+  | MssqlDataSourceWithParams
   | BigQueryDataSourceWithParams
   | ClickHouseDataSourceWithParams
   | MixpanelDataSourceWithParams;

@@ -293,6 +293,11 @@ export async function refreshMetric(
       throw new Error("Could not load metric datasource");
     }
     const integration = getSourceIntegrationObject(datasource);
+    if (integration.decryptionError) {
+      throw new Error(
+        "Could not decrypt data source credentials. View the data source settings for more info."
+      );
+    }
 
     let segment: SegmentInterface | undefined = undefined;
     if (metric.segment) {
@@ -661,6 +666,7 @@ export async function createSnapshot(
   data.results = results?.dimensions;
   data.unknownVariations = results?.unknownVariations || [];
   data.multipleExposures = results?.multipleExposures || 0;
+  data.hasCorrectedStats = true;
 
   const snapshot = await ExperimentSnapshotModel.create(data);
 
@@ -718,8 +724,10 @@ export async function processPastExperiments(
         startDate: e.start_date,
         numVariations: 1,
         variationKeys: [e.variation_id],
+        variationNames: [e.variation_name || ""],
         exposureQueryId: e.exposureQueryId || "",
         trackingKey: e.experiment_id,
+        experimentName: e.experiment_name,
         users: e.users,
         weights: [e.users],
       };
@@ -736,6 +744,7 @@ export async function processPastExperiments(
         el.weights.push(e.users);
         el.users += e.users;
         el.numVariations++;
+        el.variationNames?.push(e.variation_name || "");
       }
     }
   });

@@ -2,10 +2,10 @@ import { FeatureInterface } from "back-end/types/feature";
 import Modal from "../Modal";
 import ControlledTabs from "../Tabs/ControlledTabs";
 import Tab from "../Tabs/Tab";
-import Code from "../Code";
+import Code, { Language } from "../SyntaxHighlighting/Code";
 import { useState } from "react";
-import { Language } from "../Code";
 import CodeSnippetModal from "./CodeSnippetModal";
+import { DocLink, DocSection } from "../DocLink";
 
 export interface Props {
   feature: FeatureInterface;
@@ -30,48 +30,8 @@ export default function FeatureImplementationModal({
     language: Language;
     boolean: string;
     value: string;
-    docs: string;
+    docSection: DocSection;
   }[] = [
-    {
-      id: "react",
-      display: "React",
-      language: "tsx",
-      boolean: `import { useFeature, IfFeatureEnabled } from "@growthbook/growthbook-react";
-
-//...
-
-<IfFeatureEnabled feature=${JSON.stringify(feature.id)}>
-  <p>Welcome to our site!</p>
-</IfFeatureEnabled>
-
-// or 
-const myFeature = useFeature(${JSON.stringify(feature.id)}).on;
-if (myFeature) { ...
-}
-`,
-      value: `
-console.log(growthbook.getFeatureValue(${JSON.stringify(
-        feature.id
-      )}), "fallback value");`,
-      docs: "https://docs.growthbook.io/lib/react",
-    },
-
-    {
-      id: "typescript",
-      display: "Typescript",
-      language: "tsx",
-      boolean: `if (growthbook.isOn(${JSON.stringify(feature.id)})) {
-  console.log("Feature is enabled!")
-} else {
-  console.log("fallback")
-}`,
-      value: `
-console.log(growthbook.getFeatureValue(${JSON.stringify(
-        feature.id
-      )}), "fallback value");`,
-      docs: "https://docs.growthbook.io/lib/js",
-    },
-
     {
       id: "javascript",
       display: "Javascript",
@@ -85,9 +45,68 @@ console.log(growthbook.getFeatureValue(${JSON.stringify(
 console.log(growthbook.getFeatureValue(${JSON.stringify(
         feature.id
       )}), "fallback value");`,
-      docs: "https://docs.growthbook.io/lib/js",
+      docSection: "javascript",
     },
+    {
+      id: "react",
+      display: "React",
+      language: "tsx",
+      boolean: `import { useFeature, IfFeatureEnabled } from "@growthbook/growthbook-react";
 
+// Option 1: The useFeature hook
+function MyComponent() {
+  const isEnabled = useFeature(${JSON.stringify(feature.id)}).on;
+  return (
+    <div>{isEnabled ? "ON" : "OFF"}</div>
+  )
+}
+
+// Option 2: The <IfFeatureEnabled> component
+function MyOtherComponent() {
+  return (
+    <IfFeatureEnabled feature=${JSON.stringify(feature.id)}>
+      The feature is <strong>ON</strong>
+    </IfFeatureEnabled>
+  )
+}`,
+      value: `import { useGrowthBook } from "@growthbook/growthbook-react";
+
+function MyComponent() {
+  const growthbook = useGrowthBook();
+  return (
+    <div>{growthbook.getFeatureValue(${JSON.stringify(
+      feature.id
+    )}, "fallback value")}</div>
+  )
+}`,
+      docSection: "tsx",
+    },
+    {
+      id: "kotlin",
+      display: "Kotlin (Android)",
+      language: "kotlin",
+      boolean: `if (gb.feature(${JSON.stringify(feature.id)}).on) {
+  // Feature is enabled!
+}`,
+      value: `val feature = gb.feature(${JSON.stringify(feature.id)})
+println(feature.value)
+`,
+      docSection: "kotlin",
+    },
+    {
+      id: "swift",
+      display: "Swift (iOS)",
+      language: "swift",
+      boolean: `if (gb.isOn(${JSON.stringify(feature.id)})) {
+  // Feature is enabled!
+}`,
+      value: `var value = gb.getFeatureValue(${JSON.stringify(
+        feature.id
+      )}, "default value")
+print(value)
+`,
+      docSection: "sdks",
+    },
     {
       id: "go",
       display: "Go",
@@ -99,7 +118,7 @@ console.log(growthbook.getFeatureValue(${JSON.stringify(
         feature.id
       )}).GetValueWithDefault("default value")
 fmt.Println(value)`,
-      docs: "https://docs.growthbook.io/lib/go",
+      docSection: "go",
     },
     {
       id: "ruby",
@@ -112,19 +131,7 @@ end`,
         feature.id
       )}, 'default value')
 puts(value)`,
-      docs: "https://docs.growthbook.io/lib/ruby",
-    },
-    {
-      id: "kotlin",
-      display: "Kotlin (Android)",
-      language: "kotlin",
-      boolean: `if (gb.feature(${JSON.stringify(feature.id)}).on) {
-  // Feature is enabled!
-}`,
-      value: `val feature = gb.feature(${JSON.stringify(feature.id)})
-println(feature.value)
-`,
-      docs: "https://docs.growthbook.io/lib/kotlin",
+      docSection: "ruby",
     },
     {
       id: "php",
@@ -140,7 +147,7 @@ println(feature.value)
       )}, "default value");
 
 echo $value;`,
-      docs: "https://docs.growthbook.io/lib/php",
+      docSection: "php",
     },
 
     {
@@ -152,14 +159,14 @@ echo $value;`,
       value: `color = gb.getFeatureValue(${JSON.stringify(
         feature.id
       )}, "blue")`,
-      docs: "https://docs.growthbook.io/lib/python",
+      docSection: "python",
     },
 
     // ruby: {
     //   python: ``,
     //   boolean: ``,
     //   value: ``,
-    //   docs: "https://docs.growthbook.io/lib/ruby",
+    //   docSection: "ruby",
     // },
   ];
 
@@ -181,7 +188,7 @@ echo $value;`,
       close={close}
       size="lg"
       closeCta="Close"
-      header="Feature implementation"
+      header="Feature Implementation"
     >
       <p>
         {first && <>Congratulations on adding your first feature! </>}
@@ -197,9 +204,9 @@ echo $value;`,
               <Tab key={i} display={o.display} id={o.id}>
                 <p>
                   Read the{" "}
-                  <a href={o.docs} target="_blank" rel="noopener noreferrer">
+                  <DocLink docSection={o.docSection}>
                     {o.display} SDK docs
-                  </a>{" "}
+                  </DocLink>{" "}
                   or view the{" "}
                   <a
                     href="#"

@@ -1,9 +1,9 @@
-import { useEffect, useState, createContext } from "react";
+import { useEffect, useState, createContext, ReactNode } from "react";
 import {
   useAuth,
   UserOrganizations,
-  SubscriptionStatus,
   getDefaultPermissions,
+  safeLogout,
 } from "../services/auth";
 import LoadingOverlay from "./LoadingOverlay";
 import WatchProvider from "../services/WatchProvider";
@@ -13,13 +13,15 @@ import {
   OrganizationSettings,
   Permissions,
   MemberRole,
+  LicenseData,
 } from "back-end/types/organization";
 import { useGrowthBook } from "@growthbook/growthbook-react";
 import { useRouter } from "next/router";
-import { isCloud } from "../services/env";
+import { isCloud, isSentryEnabled } from "../services/env";
 import InAppHelp from "./Auth/InAppHelp";
-import Modal from "./Modal";
-import { ReactNode } from "react";
+import Button from "./Button";
+import { ThemeToggler } from "./Layout/ThemeToggler";
+import * as Sentry from "@sentry/react";
 
 type User = { id: string; email: string; name: string };
 
@@ -30,6 +32,7 @@ interface UserResponse {
   email: string;
   admin: boolean;
   organizations?: UserOrganizations;
+  license?: LicenseData;
 }
 
 interface MembersResponse {
@@ -51,13 +54,13 @@ export type UserContextValue = {
   email?: string;
   admin?: boolean;
   role?: string;
+  license?: LicenseData;
+  enterprise?: boolean;
   users?: Map<string, User>;
   getUserDisplay?: (id: string, fallback?: boolean) => string;
   update?: () => Promise<void>;
   refreshUsers?: () => Promise<void>;
   permissions: Permissions;
-  subscriptionStatus?: SubscriptionStatus;
-  trialEnd?: Date;
   settings: OrganizationSettings;
 };
 
@@ -68,14 +71,10 @@ export const UserContext = createContext<UserContextValue>({
 
 const ProtectedPage: React.FC<{
   organizationRequired: boolean;
-  preAuth: boolean;
   children: ReactNode;
-}> = ({ children, organizationRequired, preAuth }) => {
+}> = ({ children, organizationRequired }) => {
   const {
-    loading,
     isAuthenticated,
-    login,
-    logout,
     apiCall,
     orgId,
     organizations,
@@ -141,17 +140,6 @@ const ProtectedPage: React.FC<{
     }
   }, [orgId]);
 
-  // Initial authentication
-  useEffect(() => {
-    if (loading || isAuthenticated || preAuth) {
-      return;
-    }
-    const fn = async () => {
-      await login();
-    };
-    fn();
-  }, [loading, isAuthenticated, preAuth, login]);
-
   // Once authenticated, get userId, orgId from API
   useEffect(() => {
     if (!isAuthenticated) {
@@ -170,33 +158,76 @@ const ProtectedPage: React.FC<{
       userAgent: window.navigator.userAgent,
       url: router?.pathname || "",
       cloud: isCloud(),
+      enterprise: currentOrg?.enterprise || false,
+      hasLicenseKey: !!data?.license,
+      freeSeats: currentOrg?.freeSeats || 3,
+      discountCode: currentOrg?.discountCode || "",
+      hasActiveSubscription: !!currentOrg?.hasActiveSubscription,
     });
   }, [data, router?.pathname]);
 
-  // This page is before the user is authenticated (e.g. reset password)
-  if (preAuth) {
-    return <>{children}</>;
-  }
+  useEffect(() => {
+    if (!data?.email) return;
+
+    // Error tracking only enabled on GrowthBook Cloud
+    if (isSentryEnabled()) {
+      Sentry.setUser({ email: data.email, id: data.userId });
+    }
+  }, [data?.email]);
 
   if (error) {
     return (
-      <Modal
-        inline={true}
-        open={true}
-        cta="Log Out"
-        submit={async () => {
-          await logout();
-        }}
-        submitColor="danger"
-        closeCta="Reload"
-        close={() => {
-          window.location.reload();
-        }}
-        autoCloseOnSubmit={false}
-      >
-        <h3>Error signing in</h3>
-        <div className="alert alert-danger">{error}</div>
-      </Modal>
+      <div>
+        <div className="navbar bg-white border-bottom">
+          <div>
+            <img
+              alt="GrowthBook"
+              src="/logo/growthbook-logo.png"
+              style={{ height: 36 }}
+            />
+          </div>
+          <div className="ml-auto">
+            <ThemeToggler />
+          </div>
+          <div>
+            <Button
+              className="ml-auto"
+              onClick={async () => {
+                await safeLogout();
+              }}
+              color="danger"
+            >
+              Log Out
+            </Button>
+          </div>
+        </div>
+        <div className="container mt-5">
+          <div className="appbox p-4" style={{ maxWidth: 500, margin: "auto" }}>
+            <h3 className="mb-3">Error Signing In</h3>
+            <div className="alert alert-danger">{error}</div>
+            <div className="d-flex">
+              <Button
+                className="ml-auto"
+                onClick={async () => {
+                  await safeLogout();
+                }}
+                color="danger"
+              >
+                Log Out
+              </Button>
+              <button
+                className="btn btn-link"
+                onClick={(e) => {
+                  e.preventDefault();
+                  window.location.reload();
+                }}
+              >
+                Reload
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     );
   }
 
@@ -230,9 +261,9 @@ const ProtectedPage: React.FC<{
     refreshUsers,
     role,
     permissions,
-    subscriptionStatus: currentOrg?.subscriptionStatus || "active",
-    trialEnd: currentOrg?.trialEnd,
     settings: currentOrg?.settings || {},
+    enterprise: currentOrg?.enterprise || false,
+    license: data?.license,
   };
 
   return (

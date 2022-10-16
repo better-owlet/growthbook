@@ -17,7 +17,10 @@ import {
 import uniqid from "uniqid";
 import { MetricStats } from "../../types/metric";
 import { ExperimentModel } from "../models/ExperimentModel";
-import { ExperimentSnapshotDocument } from "../models/ExperimentSnapshotModel";
+import {
+  ExperimentSnapshotDocument,
+  ExperimentSnapshotModel,
+} from "../models/ExperimentSnapshotModel";
 import { getSourceIntegrationObject } from "../services/datasource";
 import { addTagsDiff } from "../models/TagModel";
 import { getOrgFromReq, userHasAccess } from "../services/organizations";
@@ -41,7 +44,6 @@ import { getMetricById } from "../models/MetricModel";
 import { addGroupsDiff } from "../services/group";
 import { IdeaModel } from "../models/IdeasModel";
 import { IdeaInterface } from "../../types/idea";
-import { ExperimentSnapshotModel } from "../models/ExperimentSnapshotModel";
 import { getDataSourceById } from "../models/DataSourceModel";
 import { generateExperimentNotebook } from "../services/notebook";
 import { analyzeExperimentResults } from "../services/stats";
@@ -56,7 +58,16 @@ import {
   auditDetailsDelete,
 } from "../services/audit";
 
-export async function getExperiments(req: AuthRequest, res: Response) {
+export async function getExperiments(
+  req: AuthRequest<
+    unknown,
+    unknown,
+    {
+      project?: string;
+    }
+  >,
+  res: Response
+) {
   const { org } = getOrgFromReq(req);
   let project = "";
   if (typeof req.query?.project === "string") {
@@ -72,7 +83,7 @@ export async function getExperiments(req: AuthRequest, res: Response) {
 }
 
 export async function getExperimentsFrequencyMonth(
-  req: AuthRequest<null, { num: string }>,
+  req: AuthRequest<null, { num: string }, { project?: string }>,
   res: Response
 ) {
   const { org } = getOrgFromReq(req);
@@ -253,7 +264,10 @@ export async function postSnapshotNotebook(
   });
 }
 
-export async function getSnapshots(req: AuthRequest, res: Response) {
+export async function getSnapshots(
+  req: AuthRequest<unknown, unknown, { ids?: string }>,
+  res: Response
+) {
   const { org } = getOrgFromReq(req);
   const idsString = (req.query?.ids as string) || "";
   if (!idsString.length) {
@@ -279,7 +293,10 @@ export async function getSnapshots(req: AuthRequest, res: Response) {
   return;
 }
 
-export async function getNewFeatures(req: AuthRequest, res: Response) {
+export async function getNewFeatures(
+  req: AuthRequest<unknown, unknown, { project?: string }>,
+  res: Response
+) {
   const { org } = getOrgFromReq(req);
   let project = "";
   if (typeof req.query?.project === "string") {
@@ -446,6 +463,7 @@ export async function postExperiments(
     queryFilter: data.queryFilter || "",
     skipPartialData: !!data.skipPartialData,
     removeMultipleExposures: !!data.removeMultipleExposures,
+    attributionModel: data.attributionModel || "firstExposure",
     variations: data.variations || [],
     implementation: data.implementation || "code",
     status: data.status || "draft",
@@ -583,6 +601,7 @@ export async function postExperiment(
     "queryFilter",
     "skipPartialData",
     "removeMultipleExposures",
+    "attributionModel",
     "metrics",
     "guardrails",
     "variations",
@@ -1309,6 +1328,7 @@ export async function getSnapshotStatus(
         {
           $set: {
             ...updates,
+            hasCorrectedStats: true,
             unknownVariations:
               results?.unknownVariations || snapshot.unknownVariations || [],
             multipleExposures:
@@ -1357,7 +1377,8 @@ export async function postSnapshot(
       users?: number[];
       metrics?: { [key: string]: MetricStats[] };
     },
-    { id: string }
+    { id: string },
+    { force?: string }
   >,
   res: Response
 ) {
@@ -1708,6 +1729,7 @@ export async function getPastExperimentsList(
   });
 }
 
+//experiments/import, sent here right after "add experiment"
 export async function postPastExperiments(
   req: AuthRequest<{ datasource: string; force: boolean }>,
   res: Response
@@ -1723,6 +1745,11 @@ export async function postPastExperiments(
   }
 
   const integration = getSourceIntegrationObject(datasourceObj);
+  if (integration.decryptionError) {
+    throw new Error(
+      "Could not decrypt data source credentials. View the data source settings for more info."
+    );
+  }
   const start = new Date();
   start.setDate(start.getDate() - IMPORT_LIMIT_DAYS);
   const now = new Date();
@@ -1735,11 +1762,7 @@ export async function postPastExperiments(
   if (!model) {
     const { queries, result } = await startRun(
       {
-        experiments: getPastExperiments(
-          integration,
-          start,
-          org?.settings?.pastExperimentsMinLength
-        ),
+        experiments: getPastExperiments(integration, start),
       },
       processPastExperiments
     );
@@ -1749,6 +1772,10 @@ export async function postPastExperiments(
       datasource: datasource,
       experiments: result || [],
       runStarted: now,
+      config: {
+        start,
+        end: now,
+      },
       error: "",
       queries,
       dateCreated: new Date(),
@@ -1758,17 +1785,17 @@ export async function postPastExperiments(
   } else if (force) {
     const { queries, result } = await startRun(
       {
-        experiments: getPastExperiments(
-          integration,
-          start,
-          org?.settings?.pastExperimentsMinLength
-        ),
+        experiments: getPastExperiments(integration, start),
       },
       processPastExperiments
     );
     model.set("runStarted", now);
     model.set("error", "");
     model.set("queries", queries);
+    model.set("config", {
+      start: start,
+      end: new Date(),
+    });
     if (result) {
       model.set("experiments", result);
     }

@@ -4,10 +4,9 @@ import Modal from "../Modal";
 import ReactDiffViewer, { DiffMethod } from "react-diff-viewer";
 import Button from "../Button";
 import { useAuth } from "../../services/auth";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import Field from "../Forms/Field";
 import { FaAngleDown, FaAngleRight } from "react-icons/fa";
-import { useMemo } from "react";
 import usePermissions from "../../hooks/usePermissions";
 
 export interface Props {
@@ -31,7 +30,7 @@ function ExpandableDiff({
   if (a === b) return null;
 
   return (
-    <>
+    <div className="diff-wrapper">
       <div
         className="list-group-item list-group-item-action d-flex"
         onClick={(e) => {
@@ -54,7 +53,7 @@ function ExpandableDiff({
           />
         </div>
       )}
-    </>
+    </div>
   );
 }
 
@@ -121,7 +120,7 @@ export default function DraftModal({ feature, close, mutate }: Props) {
       cta="Publish"
       close={close}
       closeCta="close"
-      size="lg"
+      size="max"
       secondaryCTA={
         permissions.createFeatureDrafts ? (
           <Button

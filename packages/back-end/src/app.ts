@@ -5,7 +5,6 @@ import express, {
   ErrorRequestHandler,
   Response,
 } from "express";
-import mongoInit from "./init/mongo";
 import { usingFileConfig } from "./init/config";
 import cors from "cors";
 import { AuthRequest } from "./types/AuthRequest";
@@ -13,6 +12,7 @@ import {
   APP_ORIGIN,
   CORS_ORIGIN_REGEX,
   IS_CLOUD,
+  SENTRY_DSN,
   UPLOAD_METHOD,
 } from "./util/secrets";
 import {
@@ -22,76 +22,107 @@ import {
 import asyncHandler from "express-async-handler";
 import pino from "pino-http";
 import { verifySlackRequestSignature } from "./services/slack";
-import { getJWTCheck, processJWT } from "./services/auth";
+import { getAuthConnection, processJWT, usingOpenId } from "./services/auth";
 import compression from "compression";
 import fs from "fs";
 import path from "path";
+import * as Sentry from "@sentry/node";
 
-// Controllers
-import * as authController from "./controllers/auth";
-import * as organizationsController from "./controllers/organizations";
-import * as datasourcesController from "./controllers/datasources";
-import * as experimentsController from "./controllers/experiments";
-import * as metricsController from "./controllers/metrics";
-import * as reportsController from "./controllers/reports";
-import * as ideasController from "./controllers/ideas";
-import * as presentationController from "./controllers/presentations";
-import * as discussionsController from "./controllers/discussions";
-import * as adminController from "./controllers/admin";
-import * as stripeController from "./controllers/stripe";
-import * as segmentsController from "./controllers/segments";
-import * as dimensionsController from "./controllers/dimensions";
-import * as projectsController from "./controllers/projects";
-import * as featuresController from "./controllers/features";
-import * as slackController from "./controllers/slack";
-import * as tagsController from "./controllers/tags";
+if (SENTRY_DSN) {
+  Sentry.init({ dsn: SENTRY_DSN });
+}
+
+// Begin Controllers
+import * as authControllerRaw from "./controllers/auth";
+const authController = wrapController(authControllerRaw);
+
+import * as organizationsControllerRaw from "./controllers/organizations";
+const organizationsController = wrapController(organizationsControllerRaw);
+
+import * as datasourcesControllerRaw from "./controllers/datasources";
+const datasourcesController = wrapController(datasourcesControllerRaw);
+
+import * as experimentsControllerRaw from "./controllers/experiments";
+const experimentsController = wrapController(experimentsControllerRaw);
+
+import * as metricsControllerRaw from "./controllers/metrics";
+const metricsController = wrapController(metricsControllerRaw);
+
+import * as reportsControllerRaw from "./controllers/reports";
+const reportsController = wrapController(reportsControllerRaw);
+
+import * as ideasControllerRaw from "./controllers/ideas";
+const ideasController = wrapController(ideasControllerRaw);
+
+import * as presentationControllerRaw from "./controllers/presentations";
+const presentationController = wrapController(presentationControllerRaw);
+
+import * as discussionsControllerRaw from "./controllers/discussions";
+const discussionsController = wrapController(discussionsControllerRaw);
+
+import * as adminControllerRaw from "./controllers/admin";
+const adminController = wrapController(adminControllerRaw);
+
+import * as stripeControllerRaw from "./controllers/stripe";
+const stripeController = wrapController(stripeControllerRaw);
+
+import * as vercelControllerRaw from "./controllers/vercel";
+const vercelController = wrapController(vercelControllerRaw);
+
+import * as segmentsControllerRaw from "./controllers/segments";
+const segmentsController = wrapController(segmentsControllerRaw);
+
+import * as dimensionsControllerRaw from "./controllers/dimensions";
+const dimensionsController = wrapController(dimensionsControllerRaw);
+
+import * as projectsControllerRaw from "./controllers/projects";
+const projectsController = wrapController(projectsControllerRaw);
+
+import * as featuresControllerRaw from "./controllers/features";
+const featuresController = wrapController(featuresControllerRaw);
+
+import * as slackControllerRaw from "./controllers/slack";
+const slackController = wrapController(slackControllerRaw);
+
+import * as tagsControllerRaw from "./controllers/tags";
+const tagsController = wrapController(tagsControllerRaw);
+
+import * as savedGroupsControllerRaw from "./controllers/savedGroups";
+const savedGroupsController = wrapController(savedGroupsControllerRaw);
+
+// End Controllers
+
 import { getUploadsDir } from "./services/files";
-import { queueInit } from "./init/queue";
 import { isEmailEnabled } from "./services/email";
+import { init } from "./init";
+
+// eslint-disable-next-line
+type Handler = RequestHandler<any>;
+type Controller<T extends string> = Record<T, Handler>;
 
 // Wrap every controller function in asyncHandler to catch errors properly
-// eslint-disable-next-line
-function wrapController(controller: Record<string, RequestHandler<any>>): void {
-  Object.keys(controller).forEach((key) => {
+function wrapController<T extends string>(
+  // eslint-disable-next-line
+  controller: Record<T, any>
+): Controller<T> {
+  const newController = {} as Controller<T>;
+  Object.keys(controller).forEach((key: T) => {
+    // Sanity check in case someone exports a non-function from the controller file
     if (typeof controller[key] === "function") {
-      controller[key] = asyncHandler(controller[key]);
+      newController[key] = asyncHandler(controller[key]);
     }
   });
+  return newController;
 }
-wrapController(authController);
-wrapController(organizationsController);
-wrapController(datasourcesController);
-wrapController(experimentsController);
-wrapController(metricsController);
-wrapController(ideasController);
-wrapController(presentationController);
-wrapController(discussionsController);
-wrapController(adminController);
-wrapController(stripeController);
-wrapController(segmentsController);
-wrapController(dimensionsController);
-wrapController(projectsController);
-wrapController(featuresController);
-wrapController(slackController);
-wrapController(reportsController);
-wrapController(tagsController);
 
 const app = express();
 
-let initPromise: Promise<void>;
-async function init() {
-  if (!initPromise) {
-    initPromise = (async () => {
-      await mongoInit();
-      await queueInit();
-    })();
-  }
-  try {
-    await initPromise;
-  } catch (err) {
-    console.error(err);
-    process.exit(1);
-  }
+if (SENTRY_DSN) {
+  app.use(
+    Sentry.Handlers.requestHandler({
+      user: ["email", "sub"],
+    })
+  );
 }
 
 if (!process.env.NO_INIT) {
@@ -222,7 +253,8 @@ app.post(
   slackController.postIdeas
 );
 
-app.use(bodyParser.json());
+// increase max payload json size to 1mb
+app.use(bodyParser.json({ limit: "500kb" }));
 
 // Public API routes (does not require JWT, does require cors with origin = *)
 app.get(
@@ -234,7 +266,7 @@ app.get(
   getExperimentConfig
 );
 app.get(
-  "/api/features/:key",
+  "/api/features/:key?",
   cors({
     credentials: false,
     origin: "*",
@@ -243,7 +275,7 @@ app.get(
 );
 // For preflight requests
 app.options(
-  "/api/features/:key",
+  "/api/features/:key?",
   cors({
     credentials: false,
     origin: "*",
@@ -265,18 +297,26 @@ app.use(
   })
 );
 
-// Pre-auth requests
-// Managed cloud deployment uses Auth0 instead
-if (!IS_CLOUD) {
-  app.post("/auth/refresh", authController.postRefresh);
+const useSSO = usingOpenId();
+
+// Pre-auth requests when not using SSO
+if (!useSSO) {
   app.post("/auth/login", authController.postLogin);
-  app.post("/auth/logout", authController.postLogout);
   app.post("/auth/register", authController.postRegister);
   app.post("/auth/firsttime", authController.postFirstTimeRegister);
   app.post("/auth/forgot", authController.postForgotPassword);
   app.get("/auth/reset/:token", authController.getResetPassword);
   app.post("/auth/reset/:token", authController.postResetPassword);
 }
+// Pre-auth requests when using SSO
+else {
+  app.post("/auth/sso", authController.getSSOConnectionFromDomain);
+  app.post("/auth/callback", authController.postOAuthCallback);
+}
+
+//  Pre-auth requests that are always available
+app.post("/auth/refresh", authController.postRefresh);
+app.post("/auth/logout", authController.postLogout);
 app.get("/auth/hasorgs", authController.getHasOrganizations);
 
 // File uploads don't require auth tokens.
@@ -305,7 +345,8 @@ if (UPLOAD_METHOD === "local") {
 }
 
 // All other routes require a valid JWT
-app.use(getJWTCheck());
+const auth = getAuthConnection();
+app.use(auth.middleware);
 
 // Add logged in user props to the request
 app.use(processJWT);
@@ -322,8 +363,7 @@ app.use(
 );
 
 // Logged-in auth requests
-// Managed cloud deployment uses Auth0 instead
-if (!IS_CLOUD) {
+if (!useSSO) {
   app.post("/auth/change-password", authController.postChangePassword);
 }
 
@@ -357,16 +397,27 @@ app.post(
 );
 app.get("/organization/namespaces", organizationsController.getNamespaces);
 app.post("/organization/namespaces", organizationsController.postNamespaces);
+app.put(
+  "/organization/namespaces/:name",
+  organizationsController.putNamespaces
+);
+app.delete(
+  "/organization/namespaces/:name",
+  organizationsController.deleteNamespace
+);
 app.post("/invite/accept", organizationsController.postInviteAccept);
 app.post("/invite", organizationsController.postInvite);
 app.post("/invite/resend", organizationsController.postInviteResend);
+app.put("/invite/:key/role", organizationsController.putInviteRole);
 app.delete("/invite", organizationsController.deleteInvite);
 app.get("/members", organizationsController.getUsers);
 app.delete("/member/:id", organizationsController.deleteMember);
 app.put("/member/:id/role", organizationsController.putMemberRole);
 app.post("/oauth/google", datasourcesController.postGoogleOauthRedirect);
-app.post("/subscription/start", stripeController.postStartTrial);
+app.post("/subscription/checkout", stripeController.postNewSubscription);
+app.get("/subscription/quote", stripeController.getSubscriptionQuote);
 app.post("/subscription/manage", stripeController.postCreateBillingSession);
+app.post("/subscription/success", stripeController.postSubscriptionSuccess);
 app.get("/queries/:ids", datasourcesController.getQueries);
 app.post("/organization/sample-data", datasourcesController.postSampleData);
 app.put(
@@ -374,9 +425,20 @@ app.put(
   organizationsController.putAdminResetUserPassword
 );
 
+if (IS_CLOUD) {
+  app.get("/vercel/has-token", vercelController.getHasToken);
+  app.post("/vercel/token", vercelController.postToken);
+  app.post("/vercel/env-vars", vercelController.postEnvVars);
+  app.get("/vercel/config", vercelController.getConfig);
+}
+
 // tags
 app.post("/tag", tagsController.postTag);
 app.delete("/tag/:id", tagsController.deleteTag);
+
+// groups
+app.post("/saved-groups", savedGroupsController.postSavedGroup);
+app.put("/saved-groups/:id", savedGroupsController.putSavedGroup);
 
 // Ideas
 app.get("/ideas", ideasController.getIdeas);
@@ -537,7 +599,8 @@ app.delete("/datasource/:id", datasourcesController.deleteDataSource);
 // API keys
 app.get("/keys", organizationsController.getApiKeys);
 app.post("/keys", organizationsController.postApiKey);
-app.delete("/key/:key", organizationsController.deleteApiKey);
+app.delete("/keys", organizationsController.deleteApiKey);
+app.post("/keys/reveal", organizationsController.postApiKeyReveal);
 
 // Webhooks
 app.get("/webhooks", organizationsController.getWebhooks);
@@ -585,8 +648,17 @@ app.use(function (req, res) {
   });
 });
 
-// eslint-disable-next-line
-const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
+if (SENTRY_DSN) {
+  app.use(Sentry.Handlers.errorHandler());
+}
+
+const errorHandler: ErrorRequestHandler = (
+  err,
+  req,
+  res: Response & { sentry?: string },
+  // eslint-disable-next-line
+  next
+) => {
   const status = err.status || 400;
 
   if (req.log) {
@@ -598,6 +670,7 @@ const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
   res.status(status).json({
     status: status,
     message: err.message || "An error occurred",
+    errorId: SENTRY_DSN ? res.sentry : undefined,
   });
 };
 app.use(errorHandler);

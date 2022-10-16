@@ -1,4 +1,4 @@
-import React, { FC, useState } from "react";
+import React, { FC, ReactElement, useState, useEffect, useMemo } from "react";
 import { MetricInterface, Condition, MetricType } from "back-end/types/metric";
 import { useAuth } from "../../services/auth";
 import { useFieldArray, useForm } from "react-hook-form";
@@ -8,25 +8,21 @@ import PagedModal from "../Modal/PagedModal";
 import Page from "../Modal/Page";
 import track from "../../services/track";
 import { useDefinitions } from "../../services/DefinitionsContext";
-import { useEffect } from "react";
-import Code from "../Code";
+import Code from "../SyntaxHighlighting/Code";
 import TagsInput from "../Tags/TagsInput";
 import { getDefaultConversionWindowHours } from "../../services/env";
 import {
   defaultLoseRiskThreshold,
   defaultWinRiskThreshold,
-  defaultMaxPercentChange,
-  defaultMinPercentChange,
-  defaultMinSampleSize,
   formatConversionRate,
 } from "../../services/metrics";
 import BooleanSelect, { BooleanSelectControl } from "../Forms/BooleanSelect";
 import Field from "../Forms/Field";
 import SelectField from "../Forms/SelectField";
-import { getInitialMetricQuery } from "../../services/datasources";
+import { getInitialMetricQuery, validateSQL } from "../../services/datasources";
 import MultiSelectField from "../Forms/MultiSelectField";
 import CodeTextArea from "../Forms/CodeTextArea";
-import { useMemo } from "react";
+import { useOrganizationMetricDefaults } from "../../hooks/useOrganizationMetricDefaults";
 
 const weekAgo = new Date();
 weekAgo.setDate(weekAgo.getDate() - 7);
@@ -36,37 +32,25 @@ export type MetricFormProps = {
   current: Partial<MetricInterface>;
   edit: boolean;
   source: string;
-  onClose: (refresh?: boolean) => void;
+  onClose?: () => void;
   advanced?: boolean;
+  inline?: boolean;
+  cta?: string;
+  onSuccess?: () => void;
+  secondaryCTA?: ReactElement;
 };
 
-function validateSQL(sql: string, type: MetricType, userIdTypes: string[]) {
-  if (!sql.length) {
-    throw new Error("SQL cannot be empty");
-  }
-
-  // require a SELECT statement
-  if (!sql.match(/SELECT\s[\s\S]*\sFROM\s[\S\s]+/i)) {
-    throw new Error("Invalid SQL. Expecting `SELECT ... FROM ...`");
-  }
-
+function validateMetricSQL(
+  sql: string,
+  type: MetricType,
+  userIdTypes: string[]
+) {
   // Require specific columns to be selected
   const requiredCols = ["timestamp", ...userIdTypes];
   if (type !== "binomial") {
     requiredCols.push("value");
   }
-
-  const missingCols = requiredCols.filter(
-    (col) => sql.toLowerCase().indexOf(col) < 0
-  );
-
-  if (missingCols.length > 0) {
-    throw new Error(
-      `Missing the following required columns: ${missingCols
-        .map((col) => '"' + col + '"')
-        .join(", ")}`
-    );
-  }
+  validateSQL(sql, requiredCols);
 }
 function validateBasicInfo(value: { name: string }) {
   if (value.name.length < 1) {
@@ -87,7 +71,7 @@ function validateQuerySettings(
     return;
   }
   if (sqlInput) {
-    validateSQL(value.sql, value.type, value.userIdTypes);
+    validateMetricSQL(value.sql, value.type, value.userIdTypes);
   } else {
     if (value.table.length < 1) {
       throw new Error("Table name cannot be empty");
@@ -142,11 +126,22 @@ const MetricForm: FC<MetricFormProps> = ({
   source,
   initialStep = 0,
   advanced = false,
+  inline,
+  cta = "Save",
+  onSuccess,
+  secondaryCTA,
 }) => {
   const { datasources, getDatasourceById, metrics } = useDefinitions();
   const [step, setStep] = useState(initialStep);
   const [showAdvanced, setShowAdvanced] = useState(advanced);
   const [hideTags, setHideTags] = useState(true);
+
+  const {
+    getMinSampleSizeForMetric,
+    getMinPercentageChangeForMetric,
+    getMaxPercentageChangeForMetric,
+    metricDefaults,
+  } = useOrganizationMetricDefaults();
 
   useEffect(() => {
     track("View Metric Form", {
@@ -211,11 +206,9 @@ const MetricForm: FC<MetricFormProps> = ({
       tags: current.tags || [],
       winRisk: (current.winRisk || defaultWinRiskThreshold) * 100,
       loseRisk: (current.loseRisk || defaultLoseRiskThreshold) * 100,
-      maxPercentChange:
-        (current.maxPercentChange || defaultMaxPercentChange) * 100,
-      minPercentChange:
-        (current.minPercentChange || defaultMinPercentChange) * 100,
-      minSampleSize: current.minSampleSize || defaultMinSampleSize,
+      maxPercentChange: getMaxPercentageChangeForMetric(current) * 100,
+      minPercentChange: getMinPercentageChangeForMetric(current) * 100,
+      minSampleSize: getMinSampleSizeForMetric(current),
     },
   });
 
@@ -243,14 +236,25 @@ const MetricForm: FC<MetricFormProps> = ({
     return metrics
       .filter((m) => m.id !== current?.id)
       .filter((m) => m.datasource === value.datasource)
-      .filter((m) => m.type === "binomial")
+      .filter((m) => {
+        // Binomial metrics can always be a denominator
+        // That just makes it act like a funnel (or activation) metric
+        if (m.type === "binomial") return true;
+
+        // If the numerator has a value (not binomial),
+        // then count metrics can be used as the denominator as well (as long as they don't have their own denominator)
+        // This makes it act like a true ratio metric
+        return (
+          value.type !== "binomial" && m.type === "count" && !m.denominator
+        );
+      })
       .map((m) => {
         return {
           value: m.id,
           label: m.name,
         };
       });
-  }, [metrics, value.datasource]);
+  }, [metrics, value.type, value.datasource]);
 
   const currentDataSource = getDatasourceById(value.datasource);
 
@@ -266,6 +270,8 @@ const MetricForm: FC<MetricFormProps> = ({
   const conversionWindowSupported = capSupported;
 
   const supportsSQL = currentDataSource?.properties?.queryLanguage === "sql";
+  const supportsJS =
+    currentDataSource?.properties?.queryLanguage === "javascript";
 
   const customzeTimestamp = supportsSQL;
   const customizeUserIds = supportsSQL;
@@ -321,7 +327,7 @@ const MetricForm: FC<MetricFormProps> = ({
       userIdType: value.userIdTypes.join(", "),
     });
 
-    onClose(true);
+    onSuccess && onSuccess();
   });
 
   const riskError =
@@ -331,14 +337,17 @@ const MetricForm: FC<MetricFormProps> = ({
 
   return (
     <PagedModal
+      inline={inline}
       header={edit ? "Edit Metric" : "New Metric"}
-      close={() => onClose(false)}
+      close={onClose}
       submit={onSubmit}
-      cta="Save"
-      closeCta="Cancel"
+      cta={cta}
+      closeCta={!inline && "Cancel"}
       size="lg"
+      docSection="metrics"
       step={step}
       setStep={setStep}
+      secondaryCTA={secondaryCTA}
     >
       <Page
         display="Basic Info"
@@ -552,7 +561,7 @@ const MetricForm: FC<MetricFormProps> = ({
                 {value.type !== "binomial" && !supportsSQL && (
                   <Field
                     label="User Value Aggregation"
-                    placeholder="values.reduce((sum,n)=>sum+n, 0)"
+                    placeholder="sum(values)"
                     textarea
                     minRows={1}
                     {...form.register("aggregation")}
@@ -581,21 +590,29 @@ const MetricForm: FC<MetricFormProps> = ({
                             className="form-control"
                             {...form.register(`conditions.${i}.operator`)}
                           >
-                            <option value="=">=</option>
-                            <option value="!=">!=</option>
-                            <option value="~">~</option>
-                            <option value="!~">!~</option>
-                            <option value="<">&lt;</option>
-                            <option value=">">&gt;</option>
-                            <option value="<=">&lt;=</option>
-                            <option value=">=">&gt;=</option>
+                            <option value="=">equals</option>
+                            <option value="!=">does not equal</option>
+                            <option value="~">matches the regex</option>
+                            <option value="!~">does not match the regex</option>
+                            <option value="<">is less than</option>
+                            <option value=">">is greater than</option>
+                            <option value="<=">is less than or equal to</option>
+                            <option value=">=">
+                              is greater than or equal to
+                            </option>
+                            {supportsJS && (
+                              <option value="=>">custom javascript</option>
+                            )}
                           </select>
                         </div>
                         <div className="col-auto">
-                          <input
+                          <Field
                             required
-                            className="form-control"
                             placeholder="Value"
+                            textarea={
+                              form.watch(`conditions.${i}.operator`) === "=>"
+                            }
+                            minRows={1}
                             {...form.register(`conditions.${i}.value`)}
                           />
                         </div>
@@ -708,17 +725,12 @@ const MetricForm: FC<MetricFormProps> = ({
                 <>
                   <h4>Query Preview</h4>
                   SQL:
-                  <Code
-                    language="sql"
-                    theme="dark"
-                    code={getRawSQLPreview(value)}
-                  />
+                  <Code language="sql" code={getRawSQLPreview(value)} />
                   {value.type !== "binomial" && (
                     <div className="mt-2">
                       User Value Aggregation:
                       <Code
                         language="sql"
-                        theme="dark"
                         code={getAggregateSQLPreview(value)}
                       />
                       <small className="text-muted">
@@ -920,7 +932,7 @@ const MetricForm: FC<MetricFormProps> = ({
               </div>
               {riskError && <div className="text-danger">{riskError}</div>}
               <small className="text-muted">
-                Set the threasholds for risk for this metric. This is used when
+                Set the thresholds for risk for this metric. This is used when
                 determining metric significance, highlighting the risk value as
                 green, yellow, or red.
               </small>
@@ -940,8 +952,11 @@ const MetricForm: FC<MetricFormProps> = ({
                 required in an experiment variation before showing results
                 (default{" "}
                 {value.type === "binomial"
-                  ? defaultMinSampleSize
-                  : formatConversionRate(value.type, defaultMinSampleSize)}
+                  ? metricDefaults.minimumSampleSize
+                  : formatConversionRate(
+                      value.type,
+                      metricDefaults.minimumSampleSize
+                    )}
                 )
               </small>
             </div>
@@ -953,7 +968,7 @@ const MetricForm: FC<MetricFormProps> = ({
               {...form.register("maxPercentChange", { valueAsNumber: true })}
               helpText={`An experiment that changes the metric by more than this percent will
             be flagged as suspicious (default ${
-              defaultMaxPercentChange * 100
+              metricDefaults.maxPercentageChange * 100
             })`}
             />
             <Field
@@ -963,7 +978,9 @@ const MetricForm: FC<MetricFormProps> = ({
               append="%"
               {...form.register("minPercentChange", { valueAsNumber: true })}
               helpText={`An experiment that changes the metric by less than this percent will be
-            considered a draw (default ${defaultMinPercentChange * 100})`}
+            considered a draw (default ${
+              metricDefaults.minPercentageChange * 100
+            })`}
             />
           </>
         )}

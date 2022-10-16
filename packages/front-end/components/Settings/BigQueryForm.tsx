@@ -1,6 +1,5 @@
-import { FC } from "react";
+import { FC, ChangeEventHandler } from "react";
 import { BigQueryConnectionParams } from "back-end/types/integrations/bigquery";
-import { ChangeEventHandler } from "react";
 import Field from "../Forms/Field";
 import { isCloud } from "../../services/env";
 
@@ -36,7 +35,7 @@ const BigQueryForm: FC<{
         </div>
       )}
       {(isCloud() || params.authType !== "auto") && (
-        <div>
+        <>
           <div className="form-group col-md-12">
             <div className="custom-file">
               <input
@@ -107,7 +106,7 @@ const BigQueryForm: FC<{
               </div>
             )}
           </div>
-        </div>
+        </>
       )}
       <div className="form-group col-md-12">
         <label>Default Project Name</label>

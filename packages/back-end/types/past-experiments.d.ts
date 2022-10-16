@@ -3,6 +3,8 @@ import { Queries } from "./query";
 export interface PastExperiment {
   exposureQueryId: string;
   trackingKey: string;
+  experimentName?: string;
+  variationNames?: string[];
   numVariations: number;
   variationKeys: string[];
   weights: number[];
@@ -16,6 +18,10 @@ export interface PastExperimentsInterface {
   organization: string;
   datasource: string;
   experiments?: PastExperiment[];
+  config?: {
+    start: Date;
+    end: Date;
+  };
   runStarted: Date | null;
   queries: Queries;
   error?: string;

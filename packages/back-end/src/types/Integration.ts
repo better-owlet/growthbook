@@ -65,7 +65,6 @@ export type ExperimentMetricQueryParams = {
 
 export type PastExperimentParams = {
   from: Date;
-  minLength?: number;
 };
 
 export type MetricValueParams = {
@@ -95,7 +94,9 @@ export type PastExperimentResult = {
   experiments: {
     exposureQueryId: string;
     experiment_id: string;
+    experiment_name?: string;
     variation_id: string;
+    variation_name?: string;
     start_date: Date;
     end_date: Date;
     users: number;
@@ -112,7 +113,9 @@ export type MetricValueQueryResponse = MetricValueQueryResponseRow[];
 export type PastExperimentResponse = {
   exposure_query: string;
   experiment_id: string;
+  experiment_name?: string;
   variation_id: string;
+  variation_name?: string;
   start_date: string;
   end_date: string;
   users: number;
@@ -137,6 +140,7 @@ export interface SourceIntegrationInterface {
   datasource: string;
   organization: string;
   settings: DataSourceSettings;
+  decryptionError: boolean;
   // eslint-disable-next-line
   params: any;
   getSensitiveParamKeys(): string[];

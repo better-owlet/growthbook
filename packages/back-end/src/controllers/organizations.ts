@@ -9,10 +9,11 @@ import {
   getRole,
   importConfig,
   getOrgFromReq,
-  addMemberToOrg,
-  validateLogin,
   getPermissionsByRole,
   updateRole,
+  addMemberFromSSOConnection,
+  isEnterpriseSSO,
+  validateLoginMethod,
 } from "../services/organizations";
 import {
   getSourceIntegrationObject,
@@ -20,14 +21,9 @@ import {
 } from "../services/datasource";
 import { createUser, getUsersByIds, updatePassword } from "../services/users";
 import { getAllTags } from "../models/TagModel";
-import {
-  getAllApiKeysByOrganization,
-  createApiKey,
-  deleteByOrganizationAndApiKey,
-  getFirstApiKey,
-} from "../services/apiKey";
 import { UserModel } from "../models/UserModel";
 import {
+  Invite,
   MemberRole,
   NamespaceUsage,
   OrganizationInterface,
@@ -41,24 +37,20 @@ import {
 import { WatchModel } from "../models/WatchModel";
 import { ExperimentModel } from "../models/ExperimentModel";
 import { getExperimentById, ensureWatching } from "../services/experiments";
-import { getFeature } from "../models/FeatureModel";
+import { getFeature, getAllFeatures } from "../models/FeatureModel";
 import { SegmentModel } from "../models/SegmentModel";
 import { findDimensionsByOrganization } from "../models/DimensionModel";
 import { IS_CLOUD } from "../util/secrets";
-import {
-  sendInviteEmail,
-  sendNewMemberEmail,
-  sendNewOrgEmail,
-} from "../services/email";
+import { sendInviteEmail, sendNewOrgEmail } from "../services/email";
 import { getDataSourcesByOrganization } from "../models/DataSourceModel";
 import { getAllGroups } from "../services/group";
+import { getAllSavedGroups } from "../models/SavedGroupModel";
 import { uploadFile } from "../services/files";
 import { getMetricsByOrganization } from "../models/MetricModel";
 import { WebhookModel } from "../models/WebhookModel";
 import { createWebhook } from "../services/webhooks";
 import {
   createOrganization,
-  findOrganizationByClaimedDomain,
   findOrganizationsByMemberId,
   hasOrganization,
   updateOrganization,
@@ -66,12 +58,24 @@ import {
 import { findAllProjectsByOrganization } from "../models/ProjectModel";
 import { ConfigFile } from "../init/config";
 import { WebhookInterface } from "../../types/webhook";
-import { getAllFeatures } from "../models/FeatureModel";
 import { ExperimentRule, NamespaceValue } from "../../types/feature";
+import { hasActiveSubscription } from "../services/stripe";
+import { usingOpenId } from "../services/auth";
+import { cloneDeep } from "lodash";
+import { getLicense } from "../init/license";
+import { getSSOConnectionSummary } from "../models/SSOConnectionModel";
+import {
+  createApiKey,
+  deleteApiKeyById,
+  deleteApiKeyByKey,
+  getAllApiKeysByOrganization,
+  getFirstPublishableApiKey,
+  getUnredactedSecretKey,
+} from "../models/ApiKeyModel";
 
 export async function getUser(req: AuthRequest, res: Response) {
-  // Ensure user exists in database
-  if (!req.userId && IS_CLOUD) {
+  // If using SSO, auto-create users in Mongo who we don't recognize yet
+  if (!req.userId && usingOpenId()) {
     const user = await createUser(req.name || "", req.email, "", req.verified);
     req.userId = user.id;
   }
@@ -85,45 +89,30 @@ export async function getUser(req: AuthRequest, res: Response) {
   // List of all organizations the user belongs to
   const orgs = await findOrganizationsByMemberId(userId);
 
-  // If the user is not in an organization yet and they are using GrowthBook Cloud
+  // If the user is not in an organization yet and is using SSO
   // Check to see if they should be auto-added to one based on their email domain
-  if (!orgs.length && IS_CLOUD) {
-    const emailDomain = req.email.split("@").pop()?.toLowerCase() || "";
-
-    const autoOrg = await findOrganizationByClaimedDomain(emailDomain);
+  if (!orgs.length) {
+    const autoOrg = await addMemberFromSSOConnection(req);
     if (autoOrg) {
-      // Throw error is the login method is invalid
-      validateLogin(req, autoOrg);
-
-      await addMemberToOrg(autoOrg, userId);
       orgs.push(autoOrg);
-      try {
-        await sendNewMemberEmail(
-          req.name || "",
-          req.email || "",
-          autoOrg.name,
-          autoOrg.ownerEmail
-        );
-      } catch (e) {
-        console.error("Failed to send new member email", e.message);
-      }
     }
   }
 
   // Filter out orgs that the user can't log in to
-  let lastError: Error | null = null;
+  let lastError = "";
   const validOrgs = orgs.filter((org) => {
     try {
-      validateLogin(req, org);
+      validateLoginMethod(org, req);
       return true;
     } catch (e) {
       lastError = e;
       return false;
     }
   });
+
   // If all of a user's orgs were filtered out, throw an error
-  if (orgs.length && !validOrgs.length && lastError) {
-    throw lastError;
+  if (orgs.length && !validOrgs.length) {
+    throw new Error(lastError || "Must login with SSO");
   }
 
   return res.status(200).json({
@@ -132,16 +121,19 @@ export async function getUser(req: AuthRequest, res: Response) {
     userName: req.name,
     email: req.email,
     admin: !!req.admin,
+    license: !IS_CLOUD && getLicense(),
     organizations: validOrgs.map((org) => {
       const role = getRole(org, userId);
       return {
         id: org.id,
         name: org.name,
-        subscriptionStatus: org.subscription?.status,
-        trialEnd: org.subscription?.trialEnd,
         role,
         permissions: getPermissionsByRole(role),
+        enterprise: org.enterprise || false,
         settings: org.settings || {},
+        freeSeats: org.freeSeats || 3,
+        discountCode: org.discountCode || "",
+        hasActiveSubscription: hasActiveSubscription(org),
       };
     }),
   });
@@ -161,6 +153,7 @@ export async function getDefinitions(req: AuthRequest, res: Response) {
     segments,
     tags,
     groups,
+    savedGroups,
     projects,
   ] = await Promise.all([
     getMetricsByOrganization(orgId),
@@ -171,6 +164,7 @@ export async function getDefinitions(req: AuthRequest, res: Response) {
     }),
     getAllTags(orgId),
     getAllGroups(orgId),
+    getAllSavedGroups(orgId),
     findAllProjectsByOrganization(orgId),
   ]);
 
@@ -186,12 +180,14 @@ export async function getDefinitions(req: AuthRequest, res: Response) {
         settings: d.settings,
         params: getNonSensitiveParams(integration),
         properties: integration.getSourceProperties(),
+        decryptionError: integration.decryptionError || false,
       };
     }),
     dimensions,
     segments,
     tags,
     groups,
+    savedGroups,
     projects,
   });
 }
@@ -452,6 +448,59 @@ export async function putMemberRole(
   }
 }
 
+export async function putInviteRole(
+  req: AuthRequest<{ role: MemberRole }, { key: string }>,
+  res: Response
+) {
+  req.checkPermissions("organizationSettings");
+
+  const { org } = getOrgFromReq(req);
+  const { role } = req.body;
+  const { key } = req.params;
+  const originalInvites: Invite[] = cloneDeep(org.invites);
+
+  let found = false;
+
+  org.invites.forEach((m) => {
+    if (m.key === key) {
+      m.role = role;
+      found = true;
+    }
+  });
+
+  if (!found) {
+    return res.status(404).json({
+      status: 404,
+      message: "Cannot find member",
+    });
+  }
+
+  try {
+    await updateOrganization(org.id, {
+      invites: org.invites,
+    });
+    await req.audit({
+      event: "organization.update",
+      entity: {
+        object: "organization",
+        id: org.id,
+      },
+      details: auditDetailsUpdate(
+        { invites: originalInvites },
+        { invites: org.invites }
+      ),
+    });
+    return res.status(200).json({
+      status: 200,
+    });
+  } catch (e) {
+    return res.status(400).json({
+      status: 400,
+      message: e.message || "Failed to change role",
+    });
+  }
+}
+
 export async function getOrganization(req: AuthRequest, res: Response) {
   if (!req.organization) {
     return res.status(200).json({
@@ -470,8 +519,11 @@ export async function getOrganization(req: AuthRequest, res: Response) {
     name,
     url,
     subscription,
+    freeSeats,
     connections,
     settings,
+    disableSelfServeBilling,
+    enterprise,
   } = org;
 
   const roleMapping: Map<string, MemberRole> = new Map();
@@ -483,15 +535,23 @@ export async function getOrganization(req: AuthRequest, res: Response) {
 
   const apiKeys = await getAllApiKeysByOrganization(org.id);
 
+  const enterpriseSSO = isEnterpriseSSO(req.loginMethod)
+    ? getSSOConnectionSummary(req.loginMethod)
+    : null;
+
   return res.status(200).json({
     status: 200,
     apiKeys,
+    enterpriseSSO,
     organization: {
       invites,
       ownerEmail,
       name,
       url,
       subscription,
+      freeSeats,
+      enterprise,
+      disableSelfServeBilling,
       slackTeam: connections?.slack?.team,
       members: users.map(({ id, email, name }) => {
         return {
@@ -553,12 +613,16 @@ export async function getNamespaces(req: AuthRequest, res: Response) {
 }
 
 export async function postNamespaces(
-  req: AuthRequest<{ name: string; description: string }>,
+  req: AuthRequest<{
+    name: string;
+    description: string;
+    status: "active" | "inactive";
+  }>,
   res: Response
 ) {
   req.checkPermissions("organizationSettings");
 
-  const { name, description } = req.body;
+  const { name, description, status } = req.body;
   const { org } = getOrgFromReq(req);
 
   const namespaces = org.settings?.namespaces || [];
@@ -571,8 +635,24 @@ export async function postNamespaces(
   await updateOrganization(org.id, {
     settings: {
       ...org.settings,
-      namespaces: [...namespaces, { name, description }],
+      namespaces: [...namespaces, { name, description, status }],
     },
+  });
+
+  await req.audit({
+    event: "organization.update",
+    entity: {
+      object: "organization",
+      id: org.id,
+    },
+    details: auditDetailsUpdate(
+      { settings: { namespaces } },
+      {
+        settings: {
+          namespaces: [...namespaces, { name, description, status }],
+        },
+      }
+    ),
   });
 
   res.status(200).json({
@@ -580,7 +660,107 @@ export async function postNamespaces(
   });
 }
 
-export async function postInviteAccept(req: AuthRequest, res: Response) {
+export async function putNamespaces(
+  req: AuthRequest<
+    {
+      name: string;
+      description: string;
+      status: "active" | "inactive";
+    },
+    { name: string }
+  >,
+  res: Response
+) {
+  req.checkPermissions("organizationSettings");
+
+  const { name, description, status } = req.body;
+  const originalName = req.params.name;
+  const { org } = getOrgFromReq(req);
+
+  const namespaces = org.settings?.namespaces || [];
+
+  // Namespace with the same name already exists
+  if (namespaces.filter((n) => n.name === originalName).length === 0) {
+    throw new Error("Namespace not found.");
+  }
+  const updatedNamespaces = namespaces.map((n) => {
+    if (n.name === originalName) {
+      return { name, description, status };
+    }
+    return n;
+  });
+
+  await updateOrganization(org.id, {
+    settings: {
+      ...org.settings,
+      namespaces: updatedNamespaces,
+    },
+  });
+
+  await req.audit({
+    event: "organization.update",
+    entity: {
+      object: "organization",
+      id: org.id,
+    },
+    details: auditDetailsUpdate(
+      { settings: { namespaces } },
+      { settings: { namespaces: updatedNamespaces } }
+    ),
+  });
+
+  res.status(200).json({
+    status: 200,
+  });
+}
+
+export async function deleteNamespace(
+  req: AuthRequest<null, { name: string }>,
+  res: Response
+) {
+  req.checkPermissions("organizationSettings");
+
+  const { org } = getOrgFromReq(req);
+  const { name } = req.params;
+
+  const namespaces = org.settings?.namespaces || [];
+
+  const updatedNamespaces = namespaces.filter((n) => {
+    return n.name !== name;
+  });
+
+  if (namespaces.length === updatedNamespaces.length) {
+    throw new Error("Namespace not found.");
+  }
+
+  await updateOrganization(org.id, {
+    settings: {
+      ...org.settings,
+      namespaces: updatedNamespaces,
+    },
+  });
+
+  await req.audit({
+    event: "organization.update",
+    entity: {
+      object: "organization",
+      id: org.id,
+    },
+    details: auditDetailsUpdate(
+      { settings: { namespaces } },
+      { settings: { namespaces: updatedNamespaces } }
+    ),
+  });
+
+  res.status(200).json({
+    status: 200,
+  });
+}
+
+export async function postInviteAccept(
+  req: AuthRequest<{ key: string }>,
+  res: Response
+) {
   const { key } = req.body;
 
   try {
@@ -588,6 +768,7 @@ export async function postInviteAccept(req: AuthRequest, res: Response) {
       throw new Error("Must be logged in");
     }
     const org = await acceptInvite(key, req.userId);
+
     return res.status(200).json({
       status: 200,
       orgId: org.id,
@@ -600,13 +781,20 @@ export async function postInviteAccept(req: AuthRequest, res: Response) {
   }
 }
 
-export async function postInvite(req: AuthRequest, res: Response) {
+export async function postInvite(
+  req: AuthRequest<{
+    email: string;
+    role: MemberRole;
+  }>,
+  res: Response
+) {
   req.checkPermissions("organizationSettings");
 
   const { org } = getOrgFromReq(req);
   const { email, role } = req.body;
 
   const { emailSent, inviteUrl } = await inviteUser(org, email, role);
+
   return res.status(200).json({
     status: 200,
     inviteUrl,
@@ -731,7 +919,7 @@ export async function putOrganization(
   req.checkPermissions("organizationSettings");
 
   const { org } = getOrgFromReq(req);
-  const { name, settings } = req.body;
+  const { name, settings, connections } = req.body;
 
   try {
     const updates: Partial<OrganizationInterface> = {};
@@ -748,6 +936,16 @@ export async function putOrganization(
         ...settings,
       };
       orig.settings = org.settings;
+    }
+    if (connections?.vercel) {
+      const { token, configurationId, teamId } = connections.vercel;
+      if (token && configurationId) {
+        updates.connections = {
+          ...updates.connections,
+          vercel: { token, configurationId, teamId },
+        };
+        orig.connections = org.connections;
+      }
     }
 
     await updateOrganization(org.id, updates);
@@ -782,26 +980,39 @@ export async function getApiKeys(req: AuthRequest, res: Response) {
 }
 
 export async function postApiKey(
-  req: AuthRequest<{ description?: string; environment: string }>,
+  req: AuthRequest<{
+    description?: string;
+    environment: string;
+    secret: boolean;
+  }>,
   res: Response
 ) {
   const { org } = getOrgFromReq(req);
-  const { description, environment } = req.body;
+  const { description, environment, secret } = req.body;
 
   const { preferExisting } = req.query as { preferExisting?: string };
   if (preferExisting) {
-    const existing = await getFirstApiKey(org.id, environment);
+    if (secret) {
+      throw new Error("Cannot use 'preferExisting' for secret API keys");
+    }
+    const existing = await getFirstPublishableApiKey(org.id, environment);
     if (existing) {
       return res.status(200).json({
         status: 200,
-        key: existing.key,
+        key: existing,
       });
     }
   }
 
   // Only require permissions if we are creating a new API key
   req.checkPermissions("organizationSettings");
-  const key = await createApiKey(org.id, environment, description);
+
+  const key = await createApiKey({
+    organization: org.id,
+    description: description || "",
+    environment: environment || "",
+    secret: !!secret,
+  });
 
   res.status(200).json({
     status: 200,
@@ -810,18 +1021,42 @@ export async function postApiKey(
 }
 
 export async function deleteApiKey(
-  req: AuthRequest<null, { key: string }>,
+  req: AuthRequest<{ key?: string; id?: string }>,
   res: Response
 ) {
   req.checkPermissions("organizationSettings");
 
   const { org } = getOrgFromReq(req);
-  const { key } = req.params;
+  // Old API keys did not have an id, so we need to delete by the key value itself
+  const { key, id } = req.body;
 
-  await deleteByOrganizationAndApiKey(org.id, key);
+  if (id) {
+    await deleteApiKeyById(org.id, id);
+  } else if (key) {
+    await deleteApiKeyByKey(org.id, key);
+  } else {
+    throw new Error("Must provide either an API key or id in order to delete");
+  }
 
   res.status(200).json({
     status: 200,
+  });
+}
+
+export async function postApiKeyReveal(
+  req: AuthRequest<{ id: string }>,
+  res: Response
+) {
+  req.checkPermissions("organizationSettings");
+
+  const { org } = getOrgFromReq(req);
+  const { id } = req.body;
+
+  const key = await getUnredactedSecretKey(org.id, id);
+
+  res.status(200).json({
+    status: 200,
+    key,
   });
 }
 
@@ -921,11 +1156,16 @@ export async function deleteWebhook(
   });
 }
 
-export async function postImportConfig(req: AuthRequest, res: Response) {
+export async function postImportConfig(
+  req: AuthRequest<{
+    contents: string;
+  }>,
+  res: Response
+) {
   req.checkPermissions("organizationSettings");
 
   const { org } = getOrgFromReq(req);
-  const { contents }: { contents: string } = req.body;
+  const { contents } = req.body;
 
   const config: ConfigFile = JSON.parse(contents);
   if (!config) {
@@ -949,10 +1189,15 @@ export async function putUpload(req: Request, res: Response) {
 }
 
 export async function putAdminResetUserPassword(
-  req: AuthRequest<{
-    userToUpdateId: string;
-    updatedPassword: string;
-  }>,
+  req: AuthRequest<
+    {
+      userToUpdateId: string;
+      updatedPassword: string;
+    },
+    {
+      id: string;
+    }
+  >,
   res: Response
 ) {
   req.checkPermissions("organizationSettings");
@@ -960,10 +1205,8 @@ export async function putAdminResetUserPassword(
   const { updatedPassword } = req.body;
   const userToUpdateId = req.params.id;
 
-  if (IS_CLOUD) {
-    throw new Error(
-      "This functionality is not available with GrowthBook Cloud"
-    );
+  if (usingOpenId()) {
+    throw new Error("This functionality is not available when using SSO");
   }
 
   const { org } = getOrgFromReq(req);

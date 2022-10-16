@@ -13,6 +13,7 @@ import Link from "next/link";
 import { useAuth } from "../../services/auth";
 import { GBAddCircle } from "../../components/Icons";
 import usePermissions from "../../hooks/usePermissions";
+import Code, { Language } from "../../components/SyntaxHighlighting/Code";
 
 const SegmentPage: FC = () => {
   const {
@@ -179,8 +180,8 @@ const SegmentPage: FC = () => {
     return (
       <div className="p-3 container-fluid pagecontents">
         <div className="row mb-3">
-          <div className="col">
-            <h3>Segments</h3>
+          <div className="col d-flex">
+            <h1>Segments</h1>
           </div>
         </div>
         <div className="alert alert-info">
@@ -199,8 +200,8 @@ const SegmentPage: FC = () => {
         <SegmentForm close={() => setSegmentForm(null)} current={segmentForm} />
       )}
       <div className="row mb-3">
-        <div className="col-auto">
-          <h3>Segments</h3>
+        <div className="col-auto d-flex">
+          <h1>Segments</h1>
         </div>
         <div style={{ flex: 1 }}></div>
         {permissions.createSegments && (
@@ -247,6 +248,8 @@ const SegmentPage: FC = () => {
               <tbody>
                 {segments.map((s) => {
                   const datasource = getDatasourceById(s.datasource);
+                  const language: Language =
+                    datasource?.properties?.queryLanguage || "sql";
                   return (
                     <tr key={s.id}>
                       <td>{s.name}</td>
@@ -259,8 +262,15 @@ const SegmentPage: FC = () => {
                           ? s.userIdType || "user_id"
                           : ""}
                       </td>
-                      <td className="d-none d-lg-table-cell">
-                        <code>{s.sql}</code>
+                      <td
+                        className="d-none d-lg-table-cell"
+                        style={{ maxWidth: "30em" }}
+                      >
+                        <Code
+                          code={s.sql}
+                          language={language}
+                          expandable={true}
+                        />
                       </td>
                       <td>{ago(s.dateUpdated)}</td>
                       {permissions.createSegments && (

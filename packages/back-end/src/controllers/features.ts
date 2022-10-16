@@ -2,7 +2,6 @@ import { AuthRequest } from "../types/AuthRequest";
 import { Request, Response } from "express";
 import {
   FeatureDraftChanges,
-  FeatureEnvironment,
   FeatureInterface,
   FeatureRule,
 } from "../../types/feature";
@@ -25,7 +24,7 @@ import {
   updateDraft,
 } from "../models/FeatureModel";
 import { getRealtimeUsageByHour } from "../models/RealtimeModel";
-import { lookupOrganizationByApiKey } from "../services/apiKey";
+import { lookupOrganizationByApiKey } from "../models/ApiKeyModel";
 import {
   addIdsToRules,
   arrayMove,
@@ -50,22 +49,39 @@ import { getRevisions } from "../models/FeatureRevisionModel";
 export async function getFeaturesPublic(req: Request, res: Response) {
   const { key } = req.params;
 
+  if (!key) {
+    return res.status(400).json({
+      status: 400,
+      error: "Missing API key",
+    });
+  }
+
   let project = "";
   if (typeof req.query?.project === "string") {
     project = req.query.project;
   }
 
   try {
-    const { organization, environment } = await lookupOrganizationByApiKey(key);
+    const {
+      organization,
+      secret,
+      environment,
+    } = await lookupOrganizationByApiKey(key);
     if (!organization) {
       return res.status(400).json({
         status: 400,
         error: "Invalid API key",
       });
     }
+    if (secret) {
+      return res.status(400).json({
+        status: 400,
+        error: "Must use a Publishable API key to get feature definitions",
+      });
+    }
 
     //Archived features not to be shown
-    const features = await getFeatureDefinitions(
+    const { features, dateUpdated } = await getFeatureDefinitions(
       organization,
       environment,
       project
@@ -80,6 +96,7 @@ export async function getFeaturesPublic(req: Request, res: Response) {
     res.status(200).json({
       status: 200,
       features,
+      dateUpdated,
     });
   } catch (e) {
     console.error(e);
@@ -96,8 +113,8 @@ export async function postFeatures(
 ) {
   req.checkPermissions("createFeatures");
 
-  const { id, ...otherProps } = req.body;
-  const { org, environments, userId, email, userName } = getOrgFromReq(req);
+  const { id, environmentSettings, ...otherProps } = req.body;
+  const { org, userId, email, userName } = getOrgFromReq(req);
 
   if (!id) {
     throw new Error("Must specify feature key");
@@ -108,14 +125,6 @@ export async function postFeatures(
       "Feature keys can only include letters, numbers, hyphens, and underscores."
     );
   }
-
-  const environmentSettings: Record<string, FeatureEnvironment> = {};
-  environments.forEach((env) => {
-    environmentSettings[env.id] = {
-      enabled: true,
-      rules: [],
-    };
-  });
 
   const feature: FeatureInterface = {
     defaultValue: "",
@@ -576,7 +585,10 @@ export async function postFeatureArchive(
   });
 }
 
-export async function getFeatures(req: AuthRequest, res: Response) {
+export async function getFeatures(
+  req: AuthRequest<unknown, unknown, { project?: string }>,
+  res: Response
+) {
   const { org } = getOrgFromReq(req);
 
   let project = "";
@@ -608,8 +620,8 @@ export async function getFeatureById(
   if (feature.environmentSettings) {
     Object.values(feature.environmentSettings).forEach((env) => {
       env.rules?.forEach((r) => {
-        if (r.type === "experiment" && r.trackingKey) {
-          expIds.add(r.trackingKey);
+        if (r.type === "experiment") {
+          expIds.add(r.trackingKey || feature.id);
         }
       });
     });

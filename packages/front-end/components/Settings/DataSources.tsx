@@ -1,34 +1,23 @@
 import React, { FC, useState } from "react";
 import LoadingOverlay from "../LoadingOverlay";
-import DataSourceForm from "./DataSourceForm";
-import { DataSourceInterfaceWithParams } from "back-end/types/datasource";
 import { useRouter } from "next/router";
 import { useDefinitions } from "../../services/DefinitionsContext";
 import Link from "next/link";
 import { datetime } from "../../services/dates";
 import { hasFileConfig } from "../../services/env";
 import { GBAddCircle } from "../Icons";
-import EditDataSourceSettingsForm from "./EditDataSourceSettingsForm";
 import usePermissions from "../../hooks/usePermissions";
-
-const DEFAULT_DATA_SOURCE: Partial<DataSourceInterfaceWithParams> = {
-  name: "My Datasource",
-  settings: {},
-};
+import { DocLink } from "../DocLink";
+import NewDataSourceForm from "./NewDataSourceForm";
+import Tooltip from "../Tooltip";
+import { FaExclamationTriangle } from "react-icons/fa";
 
 const DataSources: FC = () => {
   const [newModalOpen, setNewModalOpen] = useState(false);
-  const [queriesModalOpen, setQueriesModalOpen] = useState("");
 
   const router = useRouter();
 
-  const {
-    datasources,
-    error,
-    mutateDefinitions,
-    ready,
-    getDatasourceById,
-  } = useDefinitions();
+  const { datasources, error, mutateDefinitions, ready } = useDefinitions();
 
   const permissions = usePermissions();
 
@@ -38,10 +27,6 @@ const DataSources: FC = () => {
   if (!ready) {
     return <LoadingOverlay />;
   }
-
-  const newDataSource = queriesModalOpen
-    ? getDatasourceById(queriesModalOpen)
-    : null;
 
   return (
     <div>
@@ -65,7 +50,20 @@ const DataSources: FC = () => {
                 }}
               >
                 <td>
-                  <Link href={`/datasources/${d.id}`}>{d.name}</Link>
+                  <Link href={`/datasources/${d.id}`}>{d.name}</Link>{" "}
+                  {d.decryptionError && (
+                    <Tooltip
+                      body={
+                        <>
+                          Could not decrypt the connection settings for this
+                          data source. Click on the data source name for more
+                          info.
+                        </>
+                      }
+                    >
+                      <FaExclamationTriangle className="text-danger" />
+                    </Tooltip>
+                  )}
                 </td>
                 <td>{d.type}</td>
                 {!hasFileConfig() && <td>{datetime(d.dateCreated)}</td>}
@@ -81,9 +79,9 @@ const DataSources: FC = () => {
             <strong>Redshift</strong>, <strong>Snowflake</strong>,{" "}
             <strong>BigQuery</strong>, <strong>ClickHouse</strong>,{" "}
             <strong>Postgres</strong>, <strong>MySQL</strong>,{" "}
-            <strong>Athena</strong>, <strong>PrestoDB</strong>,
-            <strong>Mixpanel</strong>, and <strong>Google Analytics</strong>{" "}
-            with more coming soon.
+            <strong>MS SQL/SQL Server</strong>, <strong>Athena</strong>,{" "}
+            <strong>PrestoDB</strong>,<strong>Mixpanel</strong>, and{" "}
+            <strong>Google Analytics</strong> with more coming soon.
           </p>
           <p>
             We only ever fetch aggregate data, so none of your user&apos;s
@@ -96,9 +94,7 @@ const DataSources: FC = () => {
             <div className="alert alert-info">
               It looks like you have a <code>config.yml</code> file. Data
               sources defined there will show up on this page.{" "}
-              <a href="https://docs.growthbook.io/self-host/config#configyml">
-                View Documentation
-              </a>
+              <DocLink docSection="config_yml">View Documentation</DocLink>
             </div>
           )}
         </div>
@@ -120,30 +116,21 @@ const DataSources: FC = () => {
       )}
 
       {newModalOpen && (
-        <DataSourceForm
+        <NewDataSourceForm
           existing={false}
-          data={DEFAULT_DATA_SOURCE}
+          data={{
+            name: "My Datasource",
+            settings: {},
+          }}
           source="datasource-list"
           onSuccess={async (id) => {
             await mutateDefinitions({});
             setNewModalOpen(false);
-            setQueriesModalOpen(id);
+            await router.push(`/datasources/${id}`);
           }}
           onCancel={() => {
             setNewModalOpen(false);
           }}
-        />
-      )}
-      {newDataSource && (
-        <EditDataSourceSettingsForm
-          firstTime={true}
-          data={newDataSource}
-          onCancel={() => setQueriesModalOpen("")}
-          onSuccess={async () => {
-            await mutateDefinitions({});
-            await router.push(`/datasources/${newDataSource.id}`);
-          }}
-          source="datasource-list"
         />
       )}
     </div>
