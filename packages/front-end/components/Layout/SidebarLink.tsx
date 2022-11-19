@@ -1,13 +1,13 @@
 import { FC, useEffect, useState } from "react";
 import Link from "next/link";
 import { IconType } from "react-icons/lib";
-import useUser from "../../hooks/useUser";
+import { useUser } from "../../services/UserContext";
 import { useRouter } from "next/router";
 import clsx from "clsx";
 import styles from "./SidebarLink.module.scss";
 import { FiChevronRight } from "react-icons/fi";
 import { isCloud } from "../../services/env";
-import { Permissions } from "back-end/types/organization";
+import { Permission } from "back-end/types/organization";
 import { useGrowthBook } from "@growthbook/growthbook-react";
 
 export type SidebarLinkProps = {
@@ -23,7 +23,7 @@ export type SidebarLinkProps = {
   cloudOnly?: boolean;
   selfHostedOnly?: boolean;
   autoClose?: boolean;
-  permissions?: (keyof Permissions)[];
+  permissions?: Permission[];
   subLinks?: SidebarLinkProps[];
   beta?: boolean;
   feature?: string;
@@ -54,11 +54,13 @@ const SidebarLink: FC<SidebarLinkProps> = (props) => {
 
   if (props.superAdmin && !admin) return null;
   if (props.permissions) {
+    let allowed = false;
     for (let i = 0; i < props.permissions.length; i++) {
-      if (!permissions[props.permissions[i]]) {
-        return null;
+      if (permissions[props.permissions[i]]) {
+        allowed = true;
       }
     }
+    if (!allowed) return null;
   }
 
   if (props.cloudOnly && !isCloud()) {

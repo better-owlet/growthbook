@@ -9,7 +9,7 @@ import { useDefinitions } from "../../services/DefinitionsContext";
 import { hasFileConfig } from "../../services/env";
 import clsx from "clsx";
 import Link from "next/link";
-import DeleteButton from "../../components/DeleteButton";
+import DeleteButton from "../../components/DeleteButton/DeleteButton";
 import { useAuth } from "../../services/auth";
 import { GBAddCircle } from "../../components/Icons";
 import usePermissions from "../../hooks/usePermissions";
@@ -223,11 +223,9 @@ const DimensionsPage: FC = () => {
           settings.
         </p>
 
-        {permissions.editDatasourceSettings && (
-          <Link href="/datasources">
-            <a className="btn btn-outline-primary">View Data Sources</a>
-          </Link>
-        )}
+        <Link href="/datasources">
+          <a className="btn btn-outline-primary">View Data Sources</a>
+        </Link>
       </div>
     </div>
   );

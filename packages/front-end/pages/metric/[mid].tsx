@@ -8,7 +8,7 @@ import { ExperimentInterfaceStringDates } from "back-end/types/experiment";
 import LoadingOverlay from "../../components/LoadingOverlay";
 import Link from "next/link";
 import { FaAngleLeft, FaChevronRight } from "react-icons/fa";
-import DeleteButton from "../../components/DeleteButton";
+import DeleteButton from "../../components/DeleteButton/DeleteButton";
 import { useAuth } from "../../services/auth";
 import {
   formatConversionRate,
@@ -550,7 +550,7 @@ const MetricPage: FC = () => {
                         <div className="mb-4">
                           <div className="row mb-3">
                             <div className="col-auto">
-                              <h5>
+                              <h5 className="mb-1 mt-1">
                                 {metric.type === "binomial"
                                   ? "Conversions"
                                   : "Metric Value"}{" "}

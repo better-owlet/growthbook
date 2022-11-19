@@ -2,23 +2,23 @@ import { useFieldArray, useForm } from "react-hook-form";
 import { SDKAttributeSchema } from "back-end/types/organization";
 import { useAuth } from "../../services/auth";
 import Modal from "../Modal";
-import useUser from "../../hooks/useUser";
+import { useUser } from "../../services/UserContext";
 import Toggle from "../Forms/Toggle";
 import Field from "../Forms/Field";
-import Tooltip from "../Tooltip";
-import { FaQuestionCircle } from "react-icons/fa";
+import Tooltip from "../Tooltip/Tooltip";
+import { FaQuestionCircle, FaTrash } from "react-icons/fa";
 import track from "../../services/track";
 import { useAttributeSchema } from "../../services/features";
 import useOrgSettings from "../../hooks/useOrgSettings";
 
 export default function EditAttributesModal({ close }: { close: () => void }) {
-  const { update } = useUser();
+  const { refreshOrganization } = useUser();
   const settings = useOrgSettings();
   const { apiCall } = useAuth();
 
   const form = useForm<{ attributeSchema: SDKAttributeSchema }>({
     defaultValues: {
-      attributeSchema: useAttributeSchema(),
+      attributeSchema: useAttributeSchema(true),
     },
   });
 
@@ -50,7 +50,7 @@ export default function EditAttributesModal({ close }: { close: () => void }) {
             settings: value,
           }),
         });
-        await update();
+        await refreshOrganization();
       })}
     >
       <p>
@@ -80,7 +80,12 @@ export default function EditAttributesModal({ close }: { close: () => void }) {
           </thead>
           <tbody>
             {attributeSchema.fields.map((v, i) => (
-              <tr key={i}>
+              <tr
+                className={
+                  form.watch(`attributeSchema.${i}.archived`) ? "disabled" : ""
+                }
+                key={i}
+              >
                 <td>
                   <input
                     {...form.register(`attributeSchema.${i}.property`)}
@@ -117,6 +122,7 @@ export default function EditAttributesModal({ close }: { close: () => void }) {
                   <Toggle
                     id={"toggle" + i}
                     label="Identifier"
+                    style={{ marginTop: 5 }}
                     value={!!form.watch(`attributeSchema.${i}.hashAttribute`)}
                     setValue={(value) => {
                       form.setValue(
@@ -129,13 +135,14 @@ export default function EditAttributesModal({ close }: { close: () => void }) {
                 <td>
                   <button
                     className="btn btn-link text-danger close"
+                    style={{ marginTop: 5 }}
                     type="button"
                     onClick={(e) => {
                       e.preventDefault();
                       attributeSchema.remove(i);
                     }}
                   >
-                    x
+                    <FaTrash />
                   </button>
                 </td>
               </tr>

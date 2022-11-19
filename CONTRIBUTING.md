@@ -18,7 +18,7 @@ The fastest way to start contributing to GrowthBook is by using our pre configur
 - [NodeJS](https://nodejs.org/en/download/package-manager/) 16.x or higher
   - Check version by running `node -v` on terminal
 - [Yarn](https://classic.yarnpkg.com/en/docs/install)
-- [Python](https://www.python.org/downloads/) 3.6+ (for the stats engine)
+- [Python](https://www.python.org/downloads/) 3.8+ (for the stats engine)
   - [scipy](https://scipy.org/install/)
   - [numpy](https://numpy.org/install/)
   - [pandas](https://pandas.pydata.org/docs/getting_started/install.html)
@@ -82,10 +82,10 @@ This repository is a monorepo with the following packages:
 
 - **packages/front-end** is a Next.js app and contains the full UI of the GrowthBook app.
 - **packages/back-end** is an Express app and serves as the REST api for the front-end.
-- **packages/docs** is another Next.js app of our documentation site (https://docs.growthbook.io).
 - **packages/sdk-js** is our javascript SDK (`@growthbook/growthbook` on npm)
 - **packages/sdk-react** is our React SDK (`@growthbook/growthbook-react` on npm)
 - **packages/stats** is our Python stats engine (`gbstats` on PyPi)
+- **docs** is a Docusaurus instance for our documentation site (https://docs.growthbook.io).
 
 Depending on what you're changing, you may need to edit one or more of these packages.
 
@@ -139,7 +139,7 @@ mongosh -u root
 
 ### Working on docs
 
-To start the docs site, run `yarn workspace docs dev`. You can view the site at http://localhost:3200
+To start the docs site, first `cd docs` and then run `yarn dev`. You can view the site at http://localhost:3200
 
 ### Working on the SDKs
 

@@ -35,6 +35,7 @@ export interface AttributeData {
   array: boolean;
   identifier: boolean;
   enum: string[];
+  archived: boolean;
 }
 
 export function validateFeatureValue(
@@ -204,9 +205,14 @@ export function getVariationColor(i: number) {
   return colors[i % colors.length];
 }
 
-export function useAttributeSchema() {
-  const { attributeSchema } = useOrgSettings();
-  return attributeSchema || [];
+export function useAttributeSchema(showArchived = false) {
+  const attributeSchema = useOrgSettings().attributeSchema || [];
+  return useMemo(() => {
+    if (!showArchived) {
+      return attributeSchema.filter((s) => !s.archived);
+    }
+    return attributeSchema;
+  }, [attributeSchema, showArchived]);
 }
 
 export function validateFeatureRule(
@@ -281,6 +287,22 @@ export function validateFeatureRule(
   }
 
   return hasChanges ? ruleCopy : null;
+}
+
+export function getEnabledEnvironments(feature: FeatureInterface) {
+  return Object.keys(feature.environmentSettings ?? {}).filter((env) => {
+    return !!feature.environmentSettings?.[env]?.enabled;
+  });
+}
+
+export function getAffectedEnvs(
+  feature: FeatureInterface,
+  changedEnvs: string[]
+): string[] {
+  const settings = feature.environmentSettings;
+  if (!settings) return [];
+
+  return changedEnvs.filter((e) => settings?.[e]?.enabled);
 }
 
 export function getDefaultValue(valueType: FeatureValueType): string {
@@ -414,7 +436,7 @@ export function jsonToConds(
         return;
       }
 
-      if (!value || typeof value !== "object") {
+      if (typeof value !== "object") {
         if (value === true || value === false) {
           return conds.push({
             field,
@@ -426,7 +448,7 @@ export function jsonToConds(
         return conds.push({
           field,
           operator: "$eq",
-          value: stringify(value).replace(/(^"|"$)/g, ""),
+          value: value + "",
         });
       }
       Object.keys(value).forEach((operator) => {
@@ -442,33 +464,35 @@ export function jsonToConds(
 
         if (operator === "$elemMatch") {
           if (typeof v === "object" && Object.keys(v).length === 1) {
-            if ("$eq" in v) {
+            if ("$eq" in v && typeof v["$eq"] !== "object") {
               return conds.push({
                 field,
                 operator: "$includes",
-                value: stringify(v["$eq"]).replace(/(^"|"$)/g, ""),
+                value: v["$eq"] + "",
               });
             }
           }
+          valid = false;
+          return;
         }
 
         if (operator === "$not") {
           if (typeof v === "object" && Object.keys(v).length === 1) {
-            if ("$regex" in v) {
+            if ("$regex" in v && typeof v["$regex"] === "string") {
               return conds.push({
                 field,
                 operator: "$notRegex",
-                value: stringify(v["$regex"]).replace(/(^"|"$)/g, ""),
+                value: v["$regex"],
               });
             }
             if ("$elemMatch" in v) {
               const m = v["$elemMatch"];
               if (typeof m === "object" && Object.keys(m).length === 1) {
-                if ("$eq" in m) {
+                if ("$eq" in m && typeof m["$eq"] !== "object") {
                   return conds.push({
                     field,
                     operator: "$notIncludes",
-                    value: stringify(m["$eq"]).replace(/(^"|"$)/g, ""),
+                    value: m["$eq"] + "",
                   });
                 }
               }
@@ -525,16 +549,20 @@ export function jsonToConds(
         if (
           ["$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$regex"].includes(
             operator
-          )
+          ) &&
+          typeof v !== "object"
         ) {
           return conds.push({
             field,
             operator,
-            value: stringify(v).replace(/(^"|"$)/g, ""),
+            value: v + "",
           });
         }
 
-        if (operator === ("$inGroup" || "$notInGroup")) {
+        if (
+          (operator === "$inGroup" || operator === "$notInGroup") &&
+          typeof v === "string"
+        ) {
           return conds.push({
             field,
             operator,
@@ -617,7 +645,7 @@ function getAttributeDataType(type: SDKAttributeType) {
 }
 
 export function useAttributeMap(): Map<string, AttributeData> {
-  const attributeSchema = useAttributeSchema();
+  const attributeSchema = useAttributeSchema(true);
 
   return useMemo(() => {
     if (!attributeSchema.length) {
@@ -635,6 +663,7 @@ export function useAttributeMap(): Map<string, AttributeData> {
             ? schema.enum.split(",").map((x) => x.trim())
             : [],
         identifier: !!schema.hashAttribute,
+        archived: !!schema.archived,
       });
     });
 

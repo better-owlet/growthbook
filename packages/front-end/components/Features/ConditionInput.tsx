@@ -10,6 +10,7 @@ import styles from "./ConditionInput.module.scss";
 import { GBAddCircle } from "../Icons";
 import SelectField from "../Forms/SelectField";
 import { useDefinitions } from "../../services/DefinitionsContext";
+import CodeTextArea from "../Forms/CodeTextArea";
 
 interface Props {
   defaultValue: string;
@@ -54,33 +55,37 @@ export default function ConditionInput(props: Props) {
   ];
 
   if (advanced || !attributes.size || !simpleAllowed) {
+    console.log("simpleAllowed", simpleAllowed);
     return (
       <div className="mb-3">
-        <Field
+        <CodeTextArea
           label="Targeting Conditions"
-          containerClassName="mb-0"
-          textarea
-          minRows={1}
-          maxRows={12}
+          language="json"
           value={value}
-          onChange={(e) => setValue(e.target.value)}
-          helpText="JSON format using MongoDB query syntax"
+          setValue={setValue}
+          helpText={
+            <div className="d-flex">
+              <div>JSON format using MongoDB query syntax.</div>
+              {simpleAllowed && attributes.size && (
+                <div className="ml-auto">
+                  <a
+                    href="#"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      const newConds = jsonToConds(value, attributes);
+                      // TODO: show error
+                      if (newConds === null) return;
+                      setConds(newConds);
+                      setAdvanced(false);
+                    }}
+                  >
+                    switch to simple mode
+                  </a>
+                </div>
+              )}
+            </div>
+          }
         />
-        {simpleAllowed && attributes.size && (
-          <a
-            href="#"
-            onClick={(e) => {
-              e.preventDefault();
-              const newConds = jsonToConds(value, attributes);
-              // TODO: show error
-              if (newConds === null) return;
-              setConds(newConds);
-              setAdvanced(false);
-            }}
-          >
-            switch to simple mode
-          </a>
-        )}
       </div>
     );
   }
@@ -340,29 +345,31 @@ export default function ConditionInput(props: Props) {
           })}
         </ul>
         <div className="d-flex align-items-center">
-          <a
-            className={`mr-3 btn btn-outline-primary ${styles.addcondition}`}
-            href="#"
-            onClick={(e) => {
-              e.preventDefault();
-              const prop = attributeSchema[0];
-              setConds([
-                ...conds,
-                {
-                  field: prop?.property || "",
-                  operator: prop?.datatype === "boolean" ? "$true" : "$eq",
-                  value: "",
-                },
-              ]);
-            }}
-          >
-            <span
-              className={`h4 pr-2 m-0 d-inline-block align-top ${styles.addicon}`}
+          {attributeSchema.length > 0 && (
+            <a
+              className={`mr-3 btn btn-outline-primary ${styles.addcondition}`}
+              href="#"
+              onClick={(e) => {
+                e.preventDefault();
+                const prop = attributeSchema[0];
+                setConds([
+                  ...conds,
+                  {
+                    field: prop?.property || "",
+                    operator: prop?.datatype === "boolean" ? "$true" : "$eq",
+                    value: "",
+                  },
+                ]);
+              }}
             >
-              <GBAddCircle />
-            </span>
-            Add another condition
-          </a>
+              <span
+                className={`h4 pr-2 m-0 d-inline-block align-top ${styles.addicon}`}
+              >
+                <GBAddCircle />
+              </span>
+              Add another condition
+            </a>
+          )}
           <a
             href="#"
             className="ml-auto"

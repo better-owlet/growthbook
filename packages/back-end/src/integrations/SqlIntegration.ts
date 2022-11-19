@@ -15,13 +15,22 @@ import {
   MetricValueQueryResponseRow,
   ExperimentQueryResponses,
   Dimension,
+  TestQueryResult,
 } from "../types/Integration";
 import { ExperimentPhase, ExperimentInterface } from "../../types/experiment";
 import { DimensionInterface } from "../../types/dimension";
-import { DEFAULT_CONVERSION_WINDOW_HOURS } from "../util/secrets";
+import {
+  DEFAULT_CONVERSION_WINDOW_HOURS,
+  IMPORT_LIMIT_DAYS,
+} from "../util/secrets";
 import { getValidDate } from "../util/dates";
 import { SegmentInterface } from "../../types/segment";
-import { getBaseIdTypeAndJoins, replaceSQLVars, format } from "../util/sql";
+import {
+  getBaseIdTypeAndJoins,
+  replaceSQLVars,
+  format,
+  FormatDialect,
+} from "../util/sql";
 
 export default abstract class SqlIntegration
   implements SourceIntegrationInterface {
@@ -69,6 +78,9 @@ export default abstract class SqlIntegration
   }
 
   getSchema(): string {
+    return "";
+  }
+  getFormatDialect(): FormatDialect {
     return "";
   }
   toTimestamp(date: Date) {
@@ -263,7 +275,8 @@ export default abstract class SqlIntegration
       -- Skip experiments at start of date range since it's likely missing data
       ${this.dateDiff(this.toTimestamp(params.from), "start_date")} > 2
     ORDER BY
-      experiment_id ASC, variation_id ASC`
+      experiment_id ASC, variation_id ASC`,
+      this.getFormatDialect()
     );
   }
   async runPastExperimentQuery(query: string): Promise<PastExperimentResponse> {
@@ -390,7 +403,8 @@ export default abstract class SqlIntegration
       `
           : ""
       }
-      `
+      `,
+      this.getFormatDialect()
     );
   }
 
@@ -425,6 +439,30 @@ export default abstract class SqlIntegration
 
       return ret;
     });
+  }
+
+  getTestQuery(query: string): string {
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - IMPORT_LIMIT_DAYS);
+    const limitedQuery = replaceSQLVars(
+      `WITH __table as (
+        ${query}
+      )
+      SELECT * FROM __table LIMIT 1`,
+      {
+        startDate,
+      }
+    );
+    return format(limitedQuery, this.getFormatDialect());
+  }
+
+  async runTestQuery(sql: string): Promise<TestQueryResult> {
+    // Calculate the run time of the query
+    const queryStartTime = Date.now();
+    const results = await this.runQuery(sql);
+    const queryEndTime = Date.now();
+    const duration = queryEndTime - queryStartTime;
+    return { results, duration };
   }
 
   private getIdentifiesCTE(
@@ -518,11 +556,11 @@ export default abstract class SqlIntegration
         "'Activated'"
       );
     } else if (dimension.type === "user") {
-      return "d.value";
+      return this.ifNullFallback(this.castToString("d.value"), "''");
     } else if (dimension.type === "date") {
       return this.formatDate(this.dateTrunc("e.timestamp"));
     } else if (dimension.type === "experiment") {
-      return "e.dimension";
+      return this.ifNullFallback(this.castToString("e.dimension"), "''");
     }
 
     throw new Error("Unknown dimension type: " + (dimension as Dimension).type);
@@ -912,7 +950,7 @@ export default abstract class SqlIntegration
         SELECT
           variation,
           dimension,
-          COUNT(*) as users
+          ${this.ensureFloat("COUNT(*)")} as users
         FROM
           __distinctUsers
         GROUP BY
@@ -974,7 +1012,8 @@ export default abstract class SqlIntegration
       ${this.ifElse(`variance > 0`, `sqrt(variance)`, `0`)} as stddev,
       users
     FROM __overall
-    `
+    `,
+      this.getFormatDialect()
     );
   }
   getExperimentResultsQuery(): string {

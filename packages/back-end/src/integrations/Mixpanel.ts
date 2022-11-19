@@ -163,7 +163,7 @@ export default class Mixpanel implements SourceIntegrationInterface {
           return false;
         })
         // Array of metric values for each user
-        .groupByUser(function(state, events) {
+        .groupByUser(${this.getGroupByUserFields()}function(state, events) {
           state = state || {
             inExperiment: false,
             ${dimension ? "dimension: null," : ""}
@@ -392,7 +392,7 @@ export default class Mixpanel implements SourceIntegrationInterface {
           return false;
         })
         // Metric value per user
-        .groupByUser(function(state, events) {
+        .groupByUser(${this.getGroupByUserFields()}function(state, events) {
           state = state || {date: null, metricValue: []};
           for(var i=0; i<events.length; i++) {
             state.date = state.date || events[i].time;
@@ -510,8 +510,7 @@ export default class Mixpanel implements SourceIntegrationInterface {
   getPastExperimentQuery(): string {
     throw new Error("Method not implemented.");
   }
-  async runPastExperimentQuery(query: string): Promise<PastExperimentResponse> {
-    console.log(query);
+  async runPastExperimentQuery(): Promise<PastExperimentResponse> {
     throw new Error("Method not implemented.");
   }
   getSensitiveParamKeys(): string[] {
@@ -548,6 +547,13 @@ function is${name}(event) {
       .split(/ OR /g)
       .map((e) => e.trim())
       .filter(Boolean);
+  }
+
+  private getGroupByUserFields() {
+    if (this.settings?.events?.extraUserIdProperty) {
+      return JSON.stringify([this.settings?.events?.extraUserIdProperty]) + ",";
+    }
+    return "";
   }
 
   private getEvents(from: Date, to: Date, events: (string | undefined)[]) {

@@ -54,6 +54,7 @@ import {
   ExperimentUpdateSchedule,
   OrganizationInterface,
 } from "../../types/organization";
+import { logger } from "../util/logger";
 
 export const DEFAULT_METRIC_ANALYSIS_DAYS = 90;
 
@@ -401,18 +402,7 @@ export async function createExperiment(
     throw new Error("Experiment and Organization must match");
   }
 
-  if (data.trackingKey) {
-    // Make sure id is unique
-    const existing = await getExperimentByTrackingKey(
-      data.organization,
-      data.trackingKey
-    );
-    if (existing) {
-      throw new Error(
-        "Error: Duplicate experiment id. Please choose something else"
-      );
-    }
-  } else {
+  if (!data.trackingKey) {
     // Try to generate a unique tracking key based on the experiment name
     let n = 1;
     let found = null;
@@ -590,7 +580,7 @@ function determineNextDate(schedule: ExperimentUpdateSchedule | null) {
 
       hours = (next.getTime() - Date.now()) / 1000 / 60 / 60;
     } catch (e) {
-      console.error("Failed to parse cron expression: ", e);
+      logger.warn(e, "Failed to parse cron expression");
     }
   }
   if (schedule?.type === "stale") {
